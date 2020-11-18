@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import sys
+import os
 
 
 class OrderedSet:
@@ -26,7 +27,7 @@ class OrderedSet:
 
     def index(self, item):
         """
-        Get hte index of given item (search as the key).
+        Get the index of given item (search as the key).
         """
         if item not in self.set.keys():
             print('Item not in set!')
@@ -51,7 +52,7 @@ class OrderedSet:
 
     def remove(self, item):
         """
-        Remove the given item.
+        Remove the chosen item.
         """
         if self.__len__() == 0:
             print("Set is empty!")
@@ -107,3 +108,11 @@ def progress_bar(count, total, status='', pattern='#', back='-'):
 
 def list2str(num_list):
     return ' '.join([str(num) for num in num_list])
+
+
+def create_folder(folder_path):
+    """
+    Create folder if necessary.
+    """
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)

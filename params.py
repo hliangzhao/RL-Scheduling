@@ -8,7 +8,7 @@ parser.add_argument('--eps', type=float, default=1e-6, help='epsilon (default: 1
 parser.add_argument('--num_proc', type=int, default=1, help='number of processors (default: 1)')
 parser.add_argument('--num_exp', type=int, default=10, help='number of experiments (default: 10)')
 parser.add_argument('--query_type', type=str, default='tpch', help='query type (default: TPC-H)')
-parser.add_argument('--job_folder', type=str, default='./tpch-queries', help='job folder path (default: ./tpch-queries)')
+parser.add_argument('--job_folder', type=str, default='./data/tpch-queries', help='job folder path (default: ./data/tpch-queries)')
 parser.add_argument('--result_folder', type=str, default='./results/', help='result folder path (default: ./results)')
 parser.add_argument('--model_folder', type=str, default='./models/', help='model folder path (default: ./models)')
 

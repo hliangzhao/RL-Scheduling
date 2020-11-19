@@ -3,11 +3,13 @@ import argparse
 parser = argparse.ArgumentParser(description='DAG_ML')
 
 # -- Basic --
-parser.add_argument('--seed', type=int, default=42, help='random seed for what? (default: 42)')
+parser.add_argument('--seed', type=int, default=42, help='random seed (default: 42)')
 parser.add_argument('--eps', type=float, default=1e-6, help='epsilon (default: 1e-6)')
+# TODO: the difference between proc and exec
 parser.add_argument('--num_proc', type=int, default=1, help='number of processors (default: 1)')
 parser.add_argument('--num_exp', type=int, default=10, help='number of experiments (default: 10)')
 parser.add_argument('--query_type', type=str, default='tpch', help='query type (default: TPC-H)')
+# TODO: job_folder is unnecessary if we already have query_type
 parser.add_argument('--job_folder', type=str, default='./data/tpch-queries', help='job folder path (default: ./data/tpch-queries)')
 parser.add_argument('--result_folder', type=str, default='./results/', help='result folder path (default: ./results)')
 parser.add_argument('--model_folder', type=str, default='./models/', help='model folder path (default: ./models)')
@@ -21,6 +23,7 @@ parser.add_argument('--num_stream_dags_max', type=float, default=500, help='maxi
 parser.add_argument('--stream_interval', type=int, default=25000, help='inter job arrival time in milliseconds (default: 25000)')
 parser.add_argument('--executor_data_point', type=int, default=[5, 10, 20, 40, 50, 60, 80, 100], nargs='+', help='number of executors used in tpch-queries collection')
 parser.add_argument('--reward_scale', type=float, default=100000.0, help='scale the reward to some normal values (default: 100000.0)')
+# TODO: alibaba is unnecessary
 parser.add_argument('--alibaba', type=bool, default=False, help='Use Alibaba DAGs (default: False)')
 parser.add_argument('--var_num_dags', type=bool, default=False, help='vary number of DAGs in batch (default: False)')
 parser.add_argument('--moving_delay', type=int, default=2000, help='moving delay (milliseconds) (default: 2000)')
@@ -32,7 +35,7 @@ parser.add_argument('--new_dag_interval_noise', type=int, default=1000, help='ne
 # -- Multi resource environment --
 parser.add_argument('--exec_group_num', type=int, default=[50, 50], nargs='+', help='number of executors in each type group (default: [50, 50])')
 parser.add_argument('--exec_cpus', type=float, default=[1.0, 1.0], nargs='+', help='amount of CPU in each type group (default: [1.0, 1.0])')
-parser.add_argument('--exec_mems', type=float, default=[1.0, 0.5], nargs='+', help='Amount of memory in each type group (default: [1.0, 0.5])')
+parser.add_argument('--exec_mems', type=float, default=[1.0, 0.5], nargs='+', help='amount of memory in each type group (default: [1.0, 0.5])')
 
 # -- Evaluation --
 parser.add_argument('--test_schemes', type=str, default=['dynamic_partition'], nargs='+', help='schemes for testing the performance')
@@ -70,7 +73,7 @@ parser.add_argument('--reset_prob_decay', type=float, default=0, help='decay rat
 parser.add_argument('--reset_prob_min', type=float, default=0, help='minimum of decay probability (default: 0)')
 parser.add_argument('--num_agents', type=int, default=16, help='number of parallel agents (default: 16)')
 parser.add_argument('--num_ep', type=int, default=10000000, help='number of training epochs (default: 10000000)')
-parser.add_argument('--learn_obj', type=str, default='mean', help='learning objective (default: mean)')
+parser.add_argument('--learn_obj', type=str, default='mean', help='learning objective, chosen between "mean" and "makespan" (default: mean)')
 parser.add_argument('--saved_model', type=str, default=None, help='path to the saved trained model (default: None)')
 parser.add_argument('--check_interval', type=float, default=0.01, help='interval for master to check gradient report (default: 10ms)')
 parser.add_argument('--model_save_interval', type=int, default=1000, help='interval for saving PyTorch model (default: 1000)')

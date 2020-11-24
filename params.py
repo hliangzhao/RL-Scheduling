@@ -15,6 +15,7 @@ parser.add_argument('--result_folder', type=str, default='./results/', help='res
 parser.add_argument('--model_folder', type=str, default='./models/', help='model folder path (default: ./models)')
 
 # -- Environment --
+
 parser.add_argument('--exec_cap', type=int, default=100, help='number of total executors (default: 100)')
 parser.add_argument('--num_init_dags', type=int, default=10, help='number of initial DAGs in system (default: 10)')
 parser.add_argument('--num_stream_dags', type=int, default=100, help='number of streaming DAGs (default: 100)')
@@ -26,7 +27,7 @@ parser.add_argument('--reward_scale', type=float, default=100000.0, help='scale 
 # TODO: alibaba is unnecessary
 parser.add_argument('--alibaba', type=bool, default=False, help='Use Alibaba DAGs (default: False)')
 parser.add_argument('--var_num_dags', type=bool, default=False, help='vary number of DAGs in batch (default: False)')
-parser.add_argument('--moving_delay', type=int, default=2000, help='moving delay (milliseconds) (default: 2000)')
+parser.add_argument('--moving_delay', type=int, default=2000, help='the delay of moving an executor to another job (milliseconds) (default: 2000)')
 parser.add_argument('--warmup_delay', type=int, default=1000, help='executor warming up delay (milliseconds) (default: 1000)')
 parser.add_argument('--diff_reward_enabled', type=int, default=0, help='enable differential reward (default: 0)')
 parser.add_argument('--new_dag_interval', type=int, default=10000, help='new DAG arrival interval (default: 10000 milliseconds)')

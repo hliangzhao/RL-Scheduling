@@ -116,6 +116,24 @@ class RepeatableSet:
             del self.set[item]
 
 
+class ReversibleMap:
+    def __init__(self):
+        self.map = {}
+        self.inverse_map = {}
+
+    def __setitem__(self, key, value):
+        self.map[key] = value
+        self.inverse_map[value] = key
+        # key-value pair should be unique
+        assert len(self.map) == len(self.inverse_map)
+
+    def __getitem__(self, key):
+        return self.map[key]
+
+    def __len__(self):
+        return len(self.map)
+
+
 def is_dag(num_stages, adj_mat):
     """
     Judge a job (represented by adj_mat) is a DAG or not.
@@ -135,9 +153,9 @@ def get_stages_order(stage, stages_order):
     """
     parent_idx = []
     parent_map = []      # bridge the idx and the corresponding stage
-    for stage in stage.parent_stages:
-        parent_idx.append(stage.idx)
-        parent_map[stage.idx] = stage
+    for s in stage.parent_stages:
+        parent_idx.append(s.idx)
+        parent_map[s.idx] = s
     parent_idx.sort()
     for idx in parent_idx:
         get_stages_order(parent_map[idx], stages_order)
@@ -205,7 +223,15 @@ def increase_var(var, max_var, increase_rate):
     return var
 
 
-def truncate_experience(bool_list):
+def decrease_var(var, min_var, decrease_rate):
+    if var - decrease_rate >= min_var:
+        var -= decrease_rate
+    else:
+        var = min_var
+    return var
+
+
+def truncate_experiences(bool_list):
     """
     Truncate experience.
     Example: bool_list = [True, False, True], return [0, 2, 3]

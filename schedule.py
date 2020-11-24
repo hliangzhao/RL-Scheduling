@@ -49,6 +49,7 @@ class Schedule:
         assert next_stage not in self.stage_selected
         self.stage_selected.add(next_stage)
 
+        # select the next-to-schedule stage
         executor = next(iter(self.exec_to_schedule))
         src = executor.job if executor.stage is None else executor.stage
 
@@ -61,6 +62,7 @@ class Schedule:
             use_exec = limit
         assert use_exec > 0
 
+        # submit a commitment
         self.exec_commit.add(src, next_stage, use_exec)
         self.num_src_exec -= use_exec
         assert self.num_src_exec >= 0
@@ -174,7 +176,7 @@ class Schedule:
         if frontier_changed:
             # consult all free executors
             src_job = executor.job
-            # TODO [bug]: what self.exec_commit[executor.stage] is?
+            # self.exec_commit[executor.stage] == self.exec_commit.commit[executor.stage] because of the __getitem__ func
             if len(self.exec_commit[executor.stage]) > 0:
                 # directly fulfill the commitment
                 self.exec_to_schedule = {executor}

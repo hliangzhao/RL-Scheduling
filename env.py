@@ -11,24 +11,24 @@ class Task:
     """
     This class defines the basic component of a job, i.e. task.
     """
-    def __init__(self, idx, duration, time_horizon):
+    def __init__(self, idx, rough_duration, time_horizon):
         """
         Initialize a task.
         :param idx: task executor index
-        :param duration: how much time this task required to run on an executor in average
-                Here the duration is a rough duration. It is used only when initialization.
+        :param rough_duration: how much time this task required to run on an executor in average
+                Here the duration is a rough duration because it is an estimate.
                 TODO: why not remove the complicate calculation of rough_duration since it is never used?
         :param time_horizon: records current time slot
         """
         self.idx = idx
-        self.duration = duration
+        self.duration = rough_duration
         self.time_horizon = time_horizon
-        self.stage = None  # assigned when the corresponding stage is initialized
+        self.stage = None              # assigned when the stage which it belongs to is initialized
 
         # start_time and finish_time are settled only when the task is being scheduled
         self.start_time = np.nan       # task's execution begin time
         self.finish_time = np.nan      # task's execution finish time
-        self.executor = None           # dispatched executor
+        self.executor = None           # the executor which run this task
 
     def schedule(self, start_time, duration, executor):
         """
@@ -36,7 +36,7 @@ class Task:
         finish_time can be fixed because task execution is non-preemptive.
         """
         # this task should never be scheduled beforehand
-        assert np.isnan(self.start_time) and np.isnan(self.finish_time) and (self.executor is None)
+        assert np.isnan(self.start_time) and np.isnan(self.finish_time) and self.executor is None
         self.start_time = start_time
         self.duration = duration
         self.finish_time = self.start_time + self.duration
@@ -53,6 +53,8 @@ class Task:
         Note that what it calculated is the pure 'execution' time!
         """
         if np.isnan(self.start_time) or (self.time_horizon.cur_time < self.start_time):
+            # the former: this task is not scheduled yet
+            # the later: this task is scheduled, but not the right time yet
             return self.duration
         return max(0, self.finish_time - self.time_horizon.cur_time)
 
@@ -104,22 +106,20 @@ class Stage:
 
         self.num_tasks = len(tasks)
         self.num_finished_tasks = 0
-        self.next_task_idx = 0
+        self.next_task_idx = 0         # the next wait-for-scheduling task' index
         self.no_more_task = False
         self.all_tasks_done = False
-        self.finish_time = np.inf
+        self.finish_time = np.inf                # TODO: no start_time? When to set finish_time?
 
         self.executors = utils.OrderedSet()
 
         # these vars are initialized when the corresponding job is initialized
-        self.parent_stages = []
-        self.child_stages = []
-        self.descendants = []
+        self.parent_stages, self.child_stages, self.descendants = [[]] * 3
         self.job = None
 
     def get_duration(self):
         """
-        This function calculates the 'total' remaining execution time for finishing this stage.
+        This function calculates the total remaining execution time for finishing this stage.
         Note that what we calculated is the pure 'execution' time!
         """
         return sum([task.get_duration() for task in self.tasks])
@@ -163,10 +163,10 @@ class Stage:
             else:
                 executor_key = right_executor
 
-        if executor_key not in self.task_duration['first_wave']:
+        if executor_key not in self.task_duration['first_wave']:        # omit .keys()
             # TODO: the num of executors is more than the num of tasks in this tage?
             largest_key = 0
-            for e in self.task_duration['first_wave']:      # equals to self.task_duration['first_wave'].keys()
+            for e in self.task_duration['first_wave']:
                 if e > largest_key:
                     largest_key = e
             executor_key = largest_key
@@ -188,8 +188,8 @@ class Stage:
         num_executors = len(self.job.executors)
         assert num_executors > 0      # TODO: if this job is not finished, its should has at least one executor allocated? What if it is the first?
 
-        # TODO: randomly select an executor which belongs to this stage for the need-to-schedule task (?)
-        # according to the randomly selected executor_key, get the real duration for RL training
+        # TODO: what is the relation between executor_key and executor?
+        # get the duration of the wait-for-scheduling task when executing on this executor
         executor_key = self.sample_executor_key(num_executors)
         if executor.task is None or executor.task.stage.job != task.stage.job:
             # this executor never execute a task/stage of the job (of this stage) beforehand, use 'fresh_durations'
@@ -206,7 +206,7 @@ class Stage:
         elif executor.task is not None and executor.task.stage == task.stage and \
                 len(self.task_duration['rest_wave'][executor_key]) > 0:
             # this executor is running on this stage now
-            # as a result, the task duration should be retrieved from 'rest_wave'
+            # as a result, the task duration should be retrieved from 'rest_wave' (if we have the record)
             rest_wave = self.task_duration['rest_wave'][executor_key]
             duration = rest_wave[np.random.randint(len(rest_wave))]
 
@@ -231,7 +231,7 @@ class Stage:
         self.executors.add(executor)
         executor.stage = self
 
-        # update stage info
+        # update stage info, if finished, remove itself from the set of frontier stages
         self.next_task_idx += 1
         self.no_more_task = self.next_task_idx >= self.num_tasks
         if self.no_more_task:
@@ -271,7 +271,7 @@ class Job:
         self.executors = utils.OrderedSet()
         assert utils.is_dag(self.num_stages, self.adj_mat)
 
-        self.frontier_stages = utils.OrderedSet()        # store the runnable stages
+        self.frontier_stages = utils.OrderedSet()
         for stage in self.stages:
             if stage.is_runnable():
                 self.frontier_stages.add(stage)
@@ -292,7 +292,7 @@ class Job:
     def get_executor_interval_map():
         """
         Generate args.exec_cap executors, each with different data points pair, such as (5, 5), (5, 10), (90, 100), etc.
-        TODO: What is data points pair? The var for computation power?
+        TODO: What is data points pair?
         e.g.:
             args.executor_data_point example: [5, 10, 20, 40, 50, 60, 80, 100]
             args.exec_cap example: 100
@@ -384,7 +384,7 @@ class JobDuration:
 
         # the total remaining execution time of this job
         self.job_duration = np.sum([self.stages_duration[s].duration for s in self.job.stages])
-        self.stages_finished = {}       # TODO: no need to be a dict (a set is appropriate)?
+        self.stages_finished = {}
 
     def update_duration(self):
         """
@@ -520,11 +520,12 @@ class FreeExecutors:
     def add(self, job, executor):
         """
         If the given job is None, add means that adding the executor to free exec pool. Thus we need to detach every job of this exec.
-        TODO: If the given job is not None, why detach stage?
         """
         if job is None:
+            # the exec is available to every job
             executor.detach_job()
         else:
+            # the exec is available to this job
             executor.detach_stage()
         self.job2bundled_executors[job].add(executor)
 
@@ -555,8 +556,8 @@ class FreeExecutors:
 class MovingExecutors:
     def __init__(self):
         """
-        self.moving_executors: TODO: moving from or moving to?
-        self.stage_track: TODO: explain
+        self.moving_executors: which stage this executor is moved to
+        self.stage_track: if the executor is moved to the stage, record it
         """
         self.moving_executors = {}     # {executor: stage}
         self.stage_track = {}          # {stage: (set of executors)}
@@ -584,7 +585,7 @@ class MovingExecutors:
             self.stage_track[stage].remove(executor)
             del self.moving_executors[executor]
         else:
-            # TODO: this job is complete by the time the executor arrives?
+            # this job is complete by the time the executor arrives
             stage = None
         return stage
 
@@ -681,7 +682,6 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, time_horizon, np_
     for p in range(num_stages):
         for c in range(num_stages):
             if adj_mat[p, c] == 1:
-                # TODO: will adj_mat[i, i] be 1?
                 stages[p].child_stages.append(stages[c])
                 stages[c].parent_stages.append(stages[p])
     # setup descendant node info

@@ -49,7 +49,7 @@ class OrderedSet:
         """
         if key not in self.set.keys():
             print('Item not in set!')
-            return None
+            exit(1)
         idx = 0
         for k in self.set.keys():
             if key == k:
@@ -63,19 +63,21 @@ class OrderedSet:
         """
         if self.__len__() == 0:
             print('Set is empty!')
-            return None
+            exit(1)
         item = next(iter(self.set))
         del self.set[item]
         return item
 
     def remove(self, key):
         """
-        Remove the chosen item.
+        Remove the chosen key-value pair according to the chosen key.
         """
         if self.__len__() == 0:
             print("Set is empty!")
+            exit(1)
         if key not in self.set.keys():
             print('Item not in set!')
+            exit(1)
         del self.set[key]
 
     def to_list(self):
@@ -111,6 +113,7 @@ class RepeatableSet:
     def remove(self, item):
         if item not in self.set.keys():
             print('Item not in set!')
+            exit(1)
         self.set[item] -= 1
         if self.set[item] == 0:
             del self.set[item]
@@ -152,7 +155,7 @@ def get_stages_order(stage, stages_order):
     Use DFS to get the topological order of stages for a given job (DAG).
     """
     parent_idx = []
-    parent_map = []      # bridge the idx and the corresponding stage
+    parent_map = {}      # bridge the idx and the corresponding stage
     for s in stage.parent_stages:
         parent_idx.append(s.idx)
         parent_map[s.idx] = s

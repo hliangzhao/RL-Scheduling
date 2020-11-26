@@ -15,13 +15,12 @@ parser.add_argument('--result_folder', type=str, default='./results/', help='res
 parser.add_argument('--model_folder', type=str, default='./models/', help='model folder path (default: ./models)')
 
 # -- Environment --
-
 parser.add_argument('--exec_cap', type=int, default=100, help='number of total executors (default: 100)')
 parser.add_argument('--num_init_dags', type=int, default=10, help='number of initial DAGs in system (default: 10)')
 parser.add_argument('--num_stream_dags', type=int, default=100, help='number of streaming DAGs (default: 100)')
 parser.add_argument('--num_stream_dags_grow', type=float, default=0.2, help='growth rate of number of streaming jobs  (default: 0.2)')
 parser.add_argument('--num_stream_dags_max', type=float, default=500, help='maximum number of streaming jobs (default: 500)')
-parser.add_argument('--stream_interval', type=int, default=25000, help='inter job arrival time in milliseconds (default: 25000)')
+parser.add_argument('--stream_interval', type=int, default=25000, help='inter job arrival tm in milliseconds (default: 25000)')
 parser.add_argument('--executor_data_point', type=int, default=[5, 10, 20, 40, 50, 60, 80, 100], nargs='+', help='number of executors used in tpch-queries collection')
 parser.add_argument('--reward_scale', type=float, default=100000.0, help='scale the reward to some normal values (default: 100000.0)')
 # TODO: alibaba is unnecessary
@@ -51,9 +50,9 @@ parser.add_argument('--canvs_visualization', type=int, default=1, help='Enable c
 parser.add_argument('--canvas_base', type=int, default=-10, help='Canvas color scale bottom (default: -10)')
 
 # -- Learning --
-parser.add_argument('--node_input_dim', type=int, default=5, help='node input dimensions to graph embedding (default: 5)')
+parser.add_argument('--stage_input_dim', type=int, default=5, help='stage input dimensions to graph embedding (default: 5)')
 parser.add_argument('--job_input_dim', type=int, default=3, help='job input dimensions to graph embedding (default: 3)')
-parser.add_argument('--hid_dims', type=int, default=[16, 8], nargs='+', help='hidden dimensions throughout graph embedding (default: [16, 8])')
+parser.add_argument('--hidden_dims', type=int, default=[16, 8], nargs='+', help='hidden dimensions throughout graph embedding (default: [16, 8])')
 parser.add_argument('--output_dim', type=int, default=8, help='output dimensions throughout graph embedding (default: 8)')
 parser.add_argument('--max_depth', type=int, default=8, help='maximum depth of root-leaf message passing (default: 8)')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')

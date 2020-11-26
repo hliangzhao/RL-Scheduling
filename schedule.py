@@ -76,7 +76,7 @@ class Schedule:
         while len(self.timeline) > 0 and self.num_src_exec == 0:
             # consult agent by putting executors in src_exec
             time_slot, item = self.timeline.pop()
-            self.time_horizon.update(time_slot)  # forward to this time slot
+            self.time_horizon.update(time_slot)  # forward to this tm slot
 
             # according to the type of item, take different action
             if isinstance(item, Task):
@@ -120,7 +120,7 @@ class Schedule:
                     self.num_src_exec = len(self.free_executors[None])
 
             elif isinstance(item, Executor):
-                # the event that an executor arrives at some job at some time
+                # the event that an executor arrives at some job at some tm
                 executor = item
                 # get the destination (stage) of this executor
                 stage = self.moving_executors.pop(executor)
@@ -148,13 +148,16 @@ class Schedule:
 
         # compute reward
         reward = self.reward_calculator.get_reward(self.jobs, self.time_horizon.cur_time)
-        # no more decision to make, jobs all done or time is up
+        # no more decision to make, jobs all done or tm is up
         done = self.num_src_exec == 0 and (len(self.timeline) == 0 or self.time_horizon.cur_time >= self.max_time)
         if done:
             assert self.time_horizon.cur_time >= self.max_time or len(self.jobs) == 0
         return self.observe(), reward, done
 
     def seed(self, seed):
+        """
+        TODO: when to call?
+        """
         self.np_random.seed(seed)
 
     def add_job(self, job):
@@ -303,8 +306,13 @@ class Schedule:
         return exec_lmt
 
     def observe(self):
+        """
+        What this func returns is the observation of current state.
+        This observation is used as the input to the agent. The agent construct the
+        feature matrix of this observation (state) and output a proper action.
+        """
         return self.jobs, self.src_job, self.num_src_exec, self.get_frontier_stages(), \
-               self.get_exec_limits(), self.exec_commit, self.moving_executors, self.action_map
+            self.get_exec_limits(), self.exec_commit, self.moving_executors, self.action_map
 
     def remove_job(self, job):
         """
@@ -346,10 +354,10 @@ class Schedule:
 class Timeline:
     """
      Stores the pair (time_slot, job/task/executor).
-     The time slot could be
-        - the arrival time (of a job),
-        - the finish time (of a task),
-        - the time an executor arrives at some job
+     The tm slot could be
+        - the arrival tm (of a job),
+        - the finish tm (of a task),
+        - the tm an executor arrives at some job
     """
     def __init__(self):
         """
@@ -389,13 +397,13 @@ class Timeline:
 
 class RewardCalculator:
     """
-    Use the execution time for now to calculate the reward.
-    For every job still in system, reward will add the negative of the job's executing time till now.
-    Obviously, longer each job's execution time, more punishment the Agent receives.
+    Use the execution tm for now to calculate the reward.
+    For every job still in system, reward will add the negative of the job's executing tm till now.
+    Obviously, longer each job's execution tm, more punishment the Agent receives.
     """
     def __init__(self):
         self.jobs = set()                   # jobs that not finished during [prev_time, cur_time)
-        self.prev_time = 0                  # previous reward calculation time
+        self.prev_time = 0                  # previous reward calculation tm
 
     def get_reward(self, jobs, cur_time):
         reward = 0

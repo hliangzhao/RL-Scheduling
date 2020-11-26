@@ -5,7 +5,6 @@ Some utilities.
 from collections import OrderedDict
 import sys
 import os
-import networkx as nx
 import numpy as np
 
 
@@ -137,49 +136,13 @@ class ReversibleMap:
         return len(self.map)
 
 
-def is_dag(num_stages, adj_mat):
+def compute_cdf(arr, num_bins=100):
     """
-    Judge a job (represented by adj_mat) is a DAG or not.
+    This func returns x, y for plt.plot(x, y).
     """
-    graph = nx.Graph()
-    graph.add_nodes_from(range(num_stages))
-    for i in range(num_stages):
-        for j in range(num_stages):
-            if adj_mat[i, j] == 1:
-                graph.add_edge(i, j)
-    return nx.is_directed_acyclic_graph(graph)
-
-
-def get_stages_order(stage, stages_order):
-    """
-    Use DFS to get the topological order of stages for a given job (DAG).
-    """
-    parent_idx = []
-    parent_map = {}      # bridge the idx and the corresponding stage
-    for s in stage.parent_stages:
-        parent_idx.append(s.idx)
-        parent_map[s.idx] = s
-    parent_idx.sort()
-    for idx in parent_idx:
-        get_stages_order(parent_map[idx], stages_order)
-    if stage.idx not in stages_order:
-        stages_order.append(stage.idx)
-
-
-def get_descendants(stage):
-    """
-    Recursively get the descendants of given stage.
-    """
-    if len(stage.descendants) > 0:
-        return stage.descendants
-    stage.descendants = [stage]
-    for child_stage in stage.child_stages:
-        child_descendants = get_descendants(child_stage)
-        for cd in child_descendants:
-            # avoid repeat
-            if cd not in stage.descendants:
-                stage.descendants.append(cd)
-    return stage.descendants
+    values, base = np.histogram(arr, bins=num_bins)
+    cumulative = np.cumsum(values)
+    return base[:-1], cumulative / float(cumulative[-1])
 
 
 def progress_bar(count, total, status='', pattern='#', back='-'):
@@ -196,6 +159,13 @@ def progress_bar(count, total, status='', pattern='#', back='-'):
         print('')
 
 
+def convert_indices_to_mask(indices, mask_len):
+    mask = np.zeros([1, mask_len])
+    for idx in indices:
+        mask[0, idx] = 1
+    return mask
+
+
 def list2str(num_list):
     return ' '.join([str(num) for num in num_list])
 
@@ -206,39 +176,3 @@ def create_folder(folder_path):
     """
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-
-
-def moving_average(arr_x, N):
-    # TODO: why not use np.mean?
-    return np.convolve(arr_x, np.ones(N) / N, mode='valid')
-
-
-def nonzero_min(arr_x):
-    y = arr_x.copy()
-    return min(y.remove(0))
-
-
-def increase_var(var, max_var, increase_rate):
-    if var + increase_rate <= max_var:
-        var += increase_rate
-    else:
-        var = max_var
-    return var
-
-
-def decrease_var(var, min_var, decrease_rate):
-    if var - decrease_rate >= min_var:
-        var -= decrease_rate
-    else:
-        var = min_var
-    return var
-
-
-def truncate_experiences(bool_list):
-    """
-    Truncate experience.
-    Example: bool_list = [True, False, True], return [0, 2, 3]
-    """
-    batch_points = [idx for idx, bool_v in enumerate(bool_list) if bool_v]
-    batch_points.append(len(bool_list))
-    return batch_points

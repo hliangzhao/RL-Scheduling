@@ -3,6 +3,7 @@ This module defines the basic objects in the Spark scheduling environment, inclu
     Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 import numpy as np
+import networkx as nx
 import utils
 from params import args
 
@@ -15,10 +16,10 @@ class Task:
         """
         Initialize a task.
         :param idx: task executor index
-        :param rough_duration: how much time this task required to run on an executor in average
+        :param rough_duration: how much tm this task required to run on an executor in average
                 Here the duration is a rough duration because it is an estimate.
                 TODO: why not remove the complicate calculation of rough_duration since it is never used?
-        :param time_horizon: records current time slot
+        :param time_horizon: records current tm slot
         """
         self.idx = idx
         self.duration = rough_duration
@@ -26,8 +27,8 @@ class Task:
         self.stage = None              # assigned when the stage which it belongs to is initialized
 
         # start_time and finish_time are settled only when the task is being scheduled
-        self.start_time = np.nan       # task's execution begin time
-        self.finish_time = np.nan      # task's execution finish time
+        self.start_time = np.nan       # task's execution begin tm
+        self.finish_time = np.nan      # task's execution finish tm
         self.executor = None           # the executor which run this task
 
     def schedule(self, start_time, duration, executor):
@@ -49,18 +50,18 @@ class Task:
 
     def get_duration(self):
         """
-        Get the remaining execution time for finishing this task.
-        Note that what it calculated is the pure 'execution' time!
+        Get the remaining execution tm for finishing this task.
+        Note that what it calculated is the pure 'execution' tm!
         """
         if np.isnan(self.start_time) or (self.time_horizon.cur_time < self.start_time):
             # the former: this task is not scheduled yet
-            # the later: this task is scheduled, but not the right time yet
+            # the later: this task is scheduled, but not the right tm yet
             return self.duration
         return max(0, self.finish_time - self.time_horizon.cur_time)
 
     def reset(self):
         """
-        TODO: is this necessary?
+        Reset is used to handle online job arrival.
         """
         self.start_time, self.finish_time, self.executor = np.nan, np.nan, None
 
@@ -71,7 +72,7 @@ class Stage:
         Initialize a stage.
         :param idx: stage index
         :param tasks: tasks included in this stage
-        :param task_duration: a dict records various execution time of this stage on different executors under different scenarios.
+        :param task_duration: a dict records various execution tm of this stage on different executors under different scenarios.
         The dict looks like
                 {
                     'fresh_durations': {
@@ -93,7 +94,7 @@ class Stage:
                         e_N: [...]
                     }
                 }
-        :param time_horizon: records current time slot
+        :param time_horizon: records current tm slot
         :param np_random: isolated random generator
         """
         self.idx = idx
@@ -119,8 +120,8 @@ class Stage:
 
     def get_duration(self):
         """
-        This function calculates the total remaining execution time for finishing this stage.
-        Note that what we calculated is the pure 'execution' time!
+        This function calculates the total remaining execution tm for finishing this stage.
+        Note that what we calculated is the pure 'execution' tm!
         """
         return sum([task.get_duration() for task in self.tasks])
 
@@ -176,9 +177,9 @@ class Stage:
     def schedule(self, executor):
         """
         Allocate an executor to the exactly wait-for-scheduling task of this stage.
-        To faithfully simulate the actual scenario, the execution time of a task on the same executor could be different.
-        We record the execution time under three circumstances (saved in dataset):
-            - it is the first time the executor runs on the job (of this stage) ---> 'fresh_duration' (context switch delay counts);
+        To faithfully simulate the actual scenario, the execution tm of a task on the same executor could be different.
+        We record the execution tm under three circumstances (saved in dataset):
+            - it is the first tm the executor runs on the job (of this stage) ---> 'fresh_duration' (context switch delay counts);
             - the executor has run on the previous stages of the job (of this stage) but is fresh to this stage ---> 'first_wave';
             - the executor has run on this stage beforehand but is fresh to the wait-for-scheduling task ---> 'rest_wave'.
         :return: the scheduled task
@@ -243,15 +244,15 @@ class Stage:
 
 class StageDuration:
     """
-    An extra space for storing the total remaining execution time of a stage.
+    An extra space for storing the total remaining execution tm of a stage.
     """
     def __init__(self, stage):
         self.stage = stage
         self.next_unscheduled_task_idx = 0
         self.duration = self.stage.get_duration()
 
-        self.descendant_total_durations = 0            # the total remaining execution time of self.stage's descendants
-        self.descendant_critical_path_durations = 0    # the total remaining execution time of self.stage's on-critical-path descendants
+        self.descendant_total_durations = 0            # the total remaining execution tm of self.stage's descendants
+        self.descendant_critical_path_durations = 0    # the total remaining execution tm of self.stage's on-critical-path descendants
 
 
 class Job:
@@ -269,7 +270,7 @@ class Job:
         self.num_finished_stages = 0
 
         self.executors = utils.OrderedSet()
-        assert utils.is_dag(self.num_stages, self.adj_mat)
+        assert Job.is_dag(self.num_stages, self.adj_mat)
 
         self.frontier_stages = utils.OrderedSet()
         for stage in self.stages:
@@ -340,7 +341,7 @@ class Job:
 
     def get_duration(self):
         """
-        Get the total remaining execution time of this job.
+        Get the total remaining execution tm of this job.
         """
         return sum([stage.get_duration() for stage in self.stages])
 
@@ -365,10 +366,23 @@ class Job:
                 changed = True
         return changed
 
+    @staticmethod
+    def is_dag(num_stages, adj_mat):
+        """
+        Judge a job (represented by adj_mat) is a DAG or not.
+        """
+        graph = nx.Graph()
+        graph.add_nodes_from(range(num_stages))
+        for i in range(num_stages):
+            for j in range(num_stages):
+                if adj_mat[i, j] == 1:
+                    graph.add_edge(i, j)
+        return nx.is_directed_acyclic_graph(graph)
+
 
 class JobDuration:
     """
-    An extra space for storing the total remaining execution time of a job.
+    An extra space for storing the total remaining execution tm of a job.
     """
     def __init__(self, job):
         self.job = job
@@ -382,13 +396,13 @@ class JobDuration:
             self.stages_duration[stage].descendant_critical_path_durations = \
                 np.sum([s.tasks[0].duration for s in stage.descendants])
 
-        # the total remaining execution time of this job
+        # the total remaining execution tm of this job
         self.job_duration = np.sum([self.stages_duration[s].duration for s in self.job.stages])
         self.stages_finished = {}
 
     def update_duration(self):
         """
-        Remove the execution time of finished stages from self.job_duration.
+        Remove the execution tm of finished stages from self.job_duration.
         """
         wait2remove_duration = 0
         for stage in self.job.stages:
@@ -585,7 +599,7 @@ class MovingExecutors:
             self.stage_track[stage].remove(executor)
             del self.moving_executors[executor]
         else:
-            # this job is complete by the time the executor arrives
+            # this job is complete by the tm the executor arrives
             stage = None
         return stage
 
@@ -609,7 +623,7 @@ class MovingExecutors:
 
 class TimeHorizon:
     """
-    Define the time horizon to track record of current time (slot).
+    Define the tm horizon to track record of current tm (slot).
     Each task should has this as a property for scheduling.
     """
     def __init__(self):
@@ -687,10 +701,27 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, time_horizon, np_
     # setup descendant node info
     for stage in stages:
         if len(stage.parent_stages) == 0:
-            stage.descendants = utils.get_descendants(stage)
+            stage.descendants = get_descendants(stage)
 
     # finally, new the job instance
     return Job(stages, adj_mat, name=args.query_type + '-' + query_size + '-' + str(query_idx))
+
+
+def get_descendants(stage):
+    """
+    Recursively get the descendants of given stage.
+    This func is called when generating a job instance.
+    """
+    if len(stage.descendants) > 0:
+        return stage.descendants
+    stage.descendants = [stage]
+    for child_stage in stage.child_stages:
+        child_descendants = get_descendants(child_stage)
+        for cd in child_descendants:
+            # avoid repeat
+            if cd not in stage.descendants:
+                stage.descendants.append(cd)
+    return stage.descendants
 
 
 def generate_tpch_jobs(np_random, timeline, time_horizon):
@@ -714,7 +745,7 @@ def generate_tpch_jobs(np_random, timeline, time_horizon):
 
     # generate future jobs (without adding to arrived_jobs)
     for _ in range(args.num_stream_dags):
-        # generate job arrival time according to in poisson distribution
+        # generate job arrival tm according to in poisson distribution
         time_slot += int(np_random.exponential(args.stream_interval))
         # query size and idx are sampled from uniform distribution
         query_size = args.tpch_size[np_random.randint(tpch_size_num)]
@@ -738,7 +769,7 @@ def generate_alibaba_cluster_trace_jobs():
 
 def generate_jobs(np_random, timeline, time_horizon):
     """
-    TODO: when support alibaba jobs, update this func.
+    TODO: update this func to support alibaba cluster trace.
     """
     if args.query_type == 'tpch':
         jobs = generate_tpch_jobs(np_random, timeline, time_horizon)
@@ -748,3 +779,20 @@ def generate_jobs(np_random, timeline, time_horizon):
     else:
         print('Invalid query type' + args.query_type)
         exit(1)
+
+
+def get_stages_order(stage, stages_order):
+    """
+    Use DFS to get the topological order of stages for a given job (DAG).
+    TODO: where to call?
+    """
+    parent_idx = []
+    parent_map = {}      # bridge the idx and the corresponding stage
+    for s in stage.parent_stages:
+        parent_idx.append(s.idx)
+        parent_map[s.idx] = s
+    parent_idx.sort()
+    for idx in parent_idx:
+        get_stages_order(parent_map[idx], stages_order)
+    if stage.idx not in stages_order:
+        stages_order.append(stage.idx)

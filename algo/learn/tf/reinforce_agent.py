@@ -11,9 +11,9 @@ import tensorflow.contrib.layers as tf_layers
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from params import args
-from agent import Agent
+from algo.agent import Agent
 from env import Job, Stage
-from algo.tf import assist, graph_nn
+from algo.learn.tf import graph_nn, assist
 import utils
 
 
@@ -172,6 +172,10 @@ class ReinforceAgent(Agent):
         self.sess.run(tf.global_variables_initializer())
         if args.saved_model is not None:
             self.saver.restore(self.sess, args.saved_model)
+
+    # used for synchronize master params to worker params
+    def get_params(self):
+        return self.sess.run(self.params)
 
     # the following 2 funcs are called in init
     def actor_network(self, stage_inputs, gcn_outputs, job_inputs, gsn_job_summary, gsn_global_summary,
@@ -467,6 +471,10 @@ class ReinforceAgent(Agent):
         )
 
         return stage, use_exec
+
+    # save model to file
+    def save_model(self, file_path):
+        return self.sess.run(self.sess, file_path)
 
 
 class MsgPassing:

@@ -38,7 +38,7 @@ parser.add_argument('--exec_cpus', type=float, default=[1.0, 1.0], nargs='+', he
 parser.add_argument('--exec_mems', type=float, default=[1.0, 0.5], nargs='+', help='amount of memory in each type group (default: [1.0, 0.5])')
 
 # -- Evaluation --
-parser.add_argument('--test_schemes', type=str, default=['dynamic_partition'], nargs='+', help='schemes for testing the performance')
+parser.add_argument('--test_schemes', type=str, default=['reinforce', 'fifo', 'dynamic'], nargs='+', help='schemes for testing the performance')
 
 # -- TPC-H --
 parser.add_argument('--tpch_size', type=str, default=['2g', '5g', '10g', '20g', '50g', '80g', '100g'], nargs='+',
@@ -46,7 +46,6 @@ parser.add_argument('--tpch_size', type=str, default=['2g', '5g', '10g', '20g', 
 parser.add_argument('--tpch_num', type=int, default=22, help='number of TPC-H queries (default: 22)')
 
 # -- Visualization --
-parser.add_argument('--canvs_visualization', type=int, default=1, help='Enable canvs visualization (default: 1)')
 parser.add_argument('--canvas_base', type=int, default=-10, help='Canvas color scale bottom (default: -10)')
 
 # -- Learning --
@@ -80,6 +79,6 @@ parser.add_argument('--model_save_interval', type=int, default=1000, help='inter
 parser.add_argument('--num_saved_models', type=int, default=1000, help='number of models to keep (default: 1000)')
 
 # -- Spark interface --
-parser.add_argument('--scheduler_type', type=str, default='dynamic_partition', help='type of scheduling algorithm (default: dynamic_partition)')
+parser.add_argument('--scheduler_for_spark', type=str, default='reinforce', help='type of scheduling algorithm (default: reinforce)')
 
 args = parser.parse_args()

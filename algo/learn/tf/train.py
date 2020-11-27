@@ -24,8 +24,7 @@ def train_master():
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    # creat result and model folder
-    utils.create_folder(args.result_folder)
+    # creat model folder
     utils.create_folder(args.model_folder)
 
     # initialize communication queues
@@ -435,11 +434,6 @@ def aggregate_gradients(gradients):
         for i in range(len(ground_gradients)):
             ground_gradients[i] += grad[i]
     return ground_gradients
-
-
-def moving_average(arr_x, N):
-    # TODO: why not use np.mean?
-    return np.convolve(arr_x, np.ones(N) / N, mode='valid')
 
 
 def nonzero_min(arr_x):

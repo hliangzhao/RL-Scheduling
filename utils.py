@@ -176,3 +176,8 @@ def create_folder(folder_path):
     """
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
+
+
+def moving_average(arr_x, N):
+    # TODO: why not use np.mean?
+    return np.convolve(arr_x, np.ones(N) / N, mode='valid')

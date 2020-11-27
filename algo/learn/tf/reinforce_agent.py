@@ -83,7 +83,14 @@ class ReinforceAgent(Agent):
         # get next stage
         # stage_acts is of shape (batch_size, 1)
         logits = tf.log(self.stage_act_probs)
-        noise = tf.random_uniform(tf.shape(logits))   # TODO: why add noise?
+        # why add noise? It's a trick learned from OpenAI's implementation
+        # below is explanations:
+        # note that the vanilla use of the policy gradient family (e.g., A2C) is on-policy (has to use data sampled from the current policy).
+        # Epsilon-greedy creates a bias in the data (because sometimes the action is sampled from random, not just from the current policy).
+        # You will need a correction, such as importance sampling, to make the training data unbiased for policy gradient.
+        # To avoid all this complication, the standard way of exploration for policy gradient is by increasing the entropy of action distribution
+        # and let the random sampling naturally explore
+        noise = tf.random_uniform(tf.shape(logits))
         self.stage_acts = tf.argmax(logits - tf.log(-tf.log(noise)), 1)
 
         # get next job
@@ -168,7 +175,7 @@ class ReinforceAgent(Agent):
         # define network param saver and where to restore models
         self.saver = tf.train.Saver(max_to_keep=args.num_saved_models)
 
-        # ====== param init ======
+        # ====== param init (load from saved model in default) ======
         self.sess.run(tf.global_variables_initializer())
         if args.saved_model is not None:
             self.saver.restore(self.sess, args.saved_model)

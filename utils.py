@@ -11,6 +11,7 @@ import numpy as np
 class OrderedSet:
     """
     Implement an ordered set.
+    We use this to store executors, frontier stages, and arrived jobs.
     """
     def __init__(self, contents=()):
         """
@@ -18,11 +19,11 @@ class OrderedSet:
         """
         self.set = OrderedDict((c, None) for c in contents)
 
-    def __contains__(self, key):
+    def __contains__(self, item):
         """
         Key exists or not.
         """
-        return key in self.set
+        return item in self.set
 
     def __iter__(self):
         """
@@ -36,22 +37,22 @@ class OrderedSet:
         """
         return len(self.set)
 
-    def add(self, key):
-        self.set[key] = None
+    def add(self, item):
+        self.set[item] = None
 
     def clear(self):
         self.set.clear()
 
-    def index(self, key):
+    def index(self, item):
         """
         Get the index of given key.
         """
-        if key not in self.set.keys():
+        if item not in self.set.keys():
             print('Item not in set!')
             exit(1)
         idx = 0
         for k in self.set.keys():
-            if key == k:
+            if item == k:
                 break
             idx += 1
         return idx
@@ -67,17 +68,17 @@ class OrderedSet:
         del self.set[item]
         return item
 
-    def remove(self, key):
+    def remove(self, item):
         """
         Remove the chosen key-value pair according to the chosen key.
         """
         if self.__len__() == 0:
             print("Set is empty!")
             exit(1)
-        if key not in self.set.keys():
+        if item not in self.set.keys():
             print('Item not in set!')
             exit(1)
-        del self.set[key]
+        del self.set[item]
 
     def to_list(self):
         """
@@ -159,17 +160,6 @@ def progress_bar(count, total, status='', pattern='#', back='-'):
         print('')
 
 
-def convert_indices_to_mask(indices, mask_len):
-    mask = np.zeros([1, mask_len])
-    for idx in indices:
-        mask[0, idx] = 1
-    return mask
-
-
-def list2str(num_list):
-    return ' '.join([str(num) for num in num_list])
-
-
 def create_folder(folder_path):
     """
     Create folder if necessary.
@@ -179,5 +169,4 @@ def create_folder(folder_path):
 
 
 def moving_average(arr_x, N):
-    # TODO: why not use np.mean?
     return np.convolve(arr_x, np.ones(N) / N, mode='valid')

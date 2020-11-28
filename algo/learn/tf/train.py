@@ -55,7 +55,7 @@ def train_master():
 
     # setup master agent
     master_agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
-                                  args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu)
+                                  args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps)
     # setup tf logger
     tf_logger = assist.Logger(
         sess,
@@ -211,7 +211,7 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
     # set up schedule event and worker agent
     schedule = Schedule()
     agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
-                           args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu)
+                           args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps)
 
     while True:
         agent_params, seed, max_time, entropy_weight = param_queue.get()
@@ -251,7 +251,7 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
                 # one step forward
                 obs, reward, done = schedule.step(stage, use_exec)
                 if stage is not None:
-                    # this action is valid, store the reward and tm
+                    # this action is valid, store the reward and time
                     experience_pool['reward'].append(reward)
                     experience_pool['cur_time'].append(schedule.time_horizon.cur_time)
                 elif len(experience_pool['reward']) > 0:
@@ -379,7 +379,7 @@ def compute_agent_gradients(reinforce_agent, experience_pool, batch_adv, entropy
         all_loss[1].append(loss[1])
     all_loss[0] = np.sum(all_loss[0])
     all_loss[1] = np.sum(all_loss[1])
-    all_loss[2] = np.sum(batch_adv ** 2)          # tm-based baseline loss
+    all_loss[2] = np.sum(batch_adv ** 2)          # time-based baseline loss
 
     # aggregate all gradients from the batch
     gradients = aggregate_gradients(all_gradients)
@@ -397,7 +397,7 @@ class AvgRewardPerStep:
         self.reward_record, self.time_record = [], []
         self.reward_sum, self.time_sum = 0, 0
 
-    def add(self, reward, tm):
+    def add(self, reward, time):
         if self.count >= self.size:
             popped_reward = self.reward_record.pop(0)
             popped_time = self.time_record.pop(0)
@@ -406,9 +406,9 @@ class AvgRewardPerStep:
         else:
             self.count += 1
         self.reward_record.append(reward)
-        self.time_record.append(tm)
+        self.time_record.append(time)
         self.reward_sum += reward
-        self.time_sum += tm
+        self.time_sum += time
 
     def add_multi(self, reward_list, time_list):
         assert len(reward_list) == len(time_list)
@@ -436,11 +436,6 @@ def aggregate_gradients(gradients):
     return ground_gradients
 
 
-def nonzero_min(arr_x):
-    y = arr_x.copy()
-    return min(y.remove(0))
-
-
 def increase_var(var, max_var, increase_rate):
     if var + increase_rate <= max_var:
         var += increase_rate
@@ -449,9 +444,9 @@ def increase_var(var, max_var, increase_rate):
     return var
 
 
-def decrease_var(var, min_var, decrease_rate):
-    if var - decrease_rate >= min_var:
-        var -= decrease_rate
+def decrease_var(var, min_var, decay_rate):
+    if var - decay_rate >= min_var:
+        var -= decay_rate
     else:
         var = min_var
     return var
@@ -469,7 +464,8 @@ def truncate_experiences(bool_list):
 
 def generate_coin_flips(prob):
     """
-    Flip coins until the first head is return (geometric distribution).
+    Flip coins until the first head appears. Return the times of flip.
+    Obviously, the returned value follows geometric distribution.
     """
     if prob == 0:
         return np.inf
@@ -479,7 +475,8 @@ def generate_coin_flips(prob):
 def discount(x, gamma):
     """
     Used for decaying cumulate reward.
-    It's a linear filter to input x. This func is equal to scipy.signal.lfilter([1], [1, -gamma], x[:-1], axis=0)[:-1].
+    It's a linear filter to input x. This func is equal to
+    scipy.signal.lfilter([1], [1, -gamma], x[:-1], axis=0)[:-1].
     """
     out = np.zeros(x.shape)
     out[-1] = x[-1]

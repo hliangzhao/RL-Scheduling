@@ -18,8 +18,8 @@ import utils
 
 
 class ReinforceAgent(Agent):
-    def __init__(self, sess, stage_input_dim, job_input_dim, hidden_dims, output_dim, max_depth, executor_levels, activate_fn,
-                 eps=1e-6, optimizer=tf.train.AdamOptimizer, scope='reinforce_agent'):
+    def __init__(self, sess, stage_input_dim, job_input_dim, hidden_dims, output_dim, max_depth, executor_levels, activate_fn, eps,
+                 optimizer=tf.train.AdamOptimizer, scope='reinforce_agent'):
         """
         Initialization the agent. In this init, we define the basic parameters such as stage and job raw feature dim.
         We also define the computation graph for tf vars.

@@ -1,5 +1,5 @@
 """
-This module defines the functions to visualize executor usage and job run tm.
+This module defines the functions to visualize executor usage and job run time.
     Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 from params import args
@@ -10,9 +10,7 @@ import matplotlib.pyplot as plt
 
 def show_exec_usage(jobs, save_path):
     # get job completion time
-    jct = int(np.ceil(np.max(
-        [job.finish_time for job in jobs]
-    )))
+    jct = int(np.ceil(np.max([job.finish_time for job in jobs])))
     job_durations = [job.finish_time - job.start_time for job in jobs]
     exec_occupation = np.zeros(jct)
     exec_limit = np.ones(jct) * args.exec_cap
@@ -25,9 +23,9 @@ def show_exec_usage(jobs, save_path):
         num_jobs_in_sys[int(job.start_time): int(job.finish_time)] += 1
 
     exec_usage = np.sum(exec_occupation) / np.sum(exec_limit)
-    fig = plt.Figure()
+    fig = plt.figure()
     plt.subplot(2, 1, 1)
-    plt.plot(utils.moving_average(exec_occupation, 10000))
+    plt.plot(utils.moving_average(exec_occupation, 10000))  # TODO: why set as 10000?
     plt.ylabel('Number of busy executors')
     plt.title('Executor usage: ' + str(exec_usage) + '\n Average JCT: ' + str(np.mean(job_durations)))
 
@@ -36,7 +34,7 @@ def show_exec_usage(jobs, save_path):
     plt.xlabel('Time (ms)')
     plt.ylabel('Number of jobs in the system')
 
-    fig.savefig(save_path)
+    fig.savefig(save_path, dpi=100)
     plt.close(fig)
 
 
@@ -85,7 +83,7 @@ def show_job_time(jobs, executors, save_path, plot_total_time=None, plot_type='s
     # plt.colorbar()
     # plot each job finish time
     for finish_time in jobs_finish_time:
-        plt.plot([finish_time, finish_time], [- 0.5, len(executors) - 0.5], 'r')
-    plt.title('average JCT: ' + str(np.mean(jobs_duration)))
-    fig.savefig(save_path)
+        plt.plot([finish_time, finish_time], [-0.5, len(executors) - 0.5], 'r')
+    plt.title('Average JCT: ' + str(np.mean(jobs_duration)))
+    fig.savefig(save_path, dpi=100)
     plt.close(fig)

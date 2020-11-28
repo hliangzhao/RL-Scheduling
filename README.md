@@ -8,7 +8,8 @@ Also, **Decima** is applied for stream processing framework, such as Spark (http
 and Flink (https://github.com/apache/flink). I try to adapt this algorithm to batch systems, such as 
 Flink, etc.
 
-By the way, the authors do not open the codes for multi-resource scheduling. I may implement it by myself in this repos.
+By the way, the authors do not open the codes for multi-resource scheduling (and the interface to Spark). 
+I may implement it by myself in this repos.
 
 It's also interesting to adapt **Decima** to K8S-based scheduling frameworks, such as Volcano (https://github.com/volcano-sh/volcano). 
 However, we have to face many new challenges. For example, what can be scheduled is not the jobs themselves, 

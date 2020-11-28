@@ -29,20 +29,20 @@ def test():
             sess = tf.Session()
             agents[scheme] = ReinforceAgent(
                 sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims,
-                args.output_dim, args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu
+                args.output_dim, args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps
             )
         elif scheme == 'dynamic':
             agents[scheme] = DynamicAgent()
         elif scheme == 'fifo':
             agents[scheme] = FIFOAgent(exec_cap=args.exec_cap)
         else:
-            print('Scheme ' + str(scheme) + ' unknown!')
+            print('Test scheme ' + str(scheme) + ' unknown!')
             exit(1)
 
     all_total_reward = {scheme: [] for scheme in args.test_schemes}
     for exp in range(args.num_exp):
         for scheme in args.test_schemes:
-            schedule.seed(args.num_exp + exp)
+            schedule.seed(args.num_epochs + exp)
             schedule.reset()
             agent = agents[scheme]
             obs = schedule.observe()
@@ -70,10 +70,10 @@ def test():
         fig = plt.figure()
         ax = fig.add_subplot(111)
         for scheme in args.test_schemes:
-            tm, cum_reward = utils.compute_cdf(all_total_reward[scheme])
-            ax.plot(tm, cum_reward)
+            x, y = utils.compute_cdf(all_total_reward[scheme])
+            ax.plot(x, y)
         plt.xlabel('Total reward')
-        plt.ylabel('cdf')
+        plt.ylabel('CDF')
         plt.legend(args.test_schemes)
-        fig.savefig(args.result_folder, 'total_reward_cdf.png')
+        fig.savefig(args.result_folder + 'total_reward_cdf.png', dpi=100)
         plt.close(fig)

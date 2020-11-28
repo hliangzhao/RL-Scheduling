@@ -204,11 +204,11 @@ class Logger:
             tf.summary.scalar(var, tf_var)
             self.summary_vars.append(tf_var)
         self.summary_ops = tf.summary.merge_all()
-        self.writer = tf.summary.FileWriter(args.result_folder + strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+        self.writer = tf.summary.FileWriter(logdir=args.result_folder + strftime("%Y-%m-%d %H:%M:%S", gmtime()))
 
-    def log(self, ep, values):
+    def log(self, epoch_idx, values):
         assert len(self.summary_vars) == len(values)
-        feed_dict = {self.summary_vars[i]: values[i] for i in range*len(values)}
+        feed_dict = {self.summary_vars[i]: values[i] for i in range(len(values))}
         summary_str = self.sess.run(self.summary_ops, feed_dict=feed_dict)
-        self.writer.add_summary(summary=summary_str, global_step=ep)
+        self.writer.add_summary(summary=summary_str, global_step=epoch_idx)
         self.writer.flush()

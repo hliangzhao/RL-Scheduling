@@ -137,7 +137,7 @@ class ReinforceAgent(Agent):
 
         # prob on each job
         self.prob_on_each_job = tf.reshape(
-            tf.sparse_tensor_dense_matmul(self.gsn.summary_mats[0], tf.reshape(self.stage_act_probs, [-1, 1])),
+            tf.sparse_tensor_dense_matmul(self.gsn.summ_mats[0], tf.reshape(self.stage_act_probs, [-1, 1])),
             [tf.reshape(self.stage_act_probs)[0], -1]
         )
 
@@ -398,7 +398,7 @@ class ReinforceAgent(Agent):
             feed_dict={
                 i: d for i, d in zip(
                     [self.stage_inputs] + [self.job_inputs] + [self.stage_valid_mask] + [self.job_valid_mask] +
-                    self.gcn.adj_mats + self.gcn.masks + self.gsn.summary_mats + [self.job_summ_backward_map],
+                    self.gcn.adj_mats + self.gcn.masks + self.gsn.summ_mats + [self.job_summ_backward_map],
 
                     [stage_inputs] + [job_inputs] + [stage_valid_mask] + [job_valid_mask] +
                     gcn_mats + gcn_masks + [summ_mats, running_jobs_mat] + [job_summ_backward_map]
@@ -419,7 +419,7 @@ class ReinforceAgent(Agent):
         return self.sess.run(
             [self.gsn.summaries],
             feed_dict={
-                i: d for i, d in zip([self.stage_inputs] + self.gsn.summary_mats, [stage_inputs] + summ_mats)
+                i: d for i, d in zip([self.stage_inputs] + self.gsn.summ_mats, [stage_inputs] + summ_mats)
             }
         )
 
@@ -430,7 +430,7 @@ class ReinforceAgent(Agent):
             feed_dict={
                 i: d for i, d in zip(
                     [self.stage_inputs] + [self.job_inputs] + [self.stage_valid_mask] + [self.job_valid_mask] +
-                    self.gcn.adj_mats + self.gcn.masks + self.gsn.summary_mats + [self.job_summ_backward_map] +
+                    self.gcn.adj_mats + self.gcn.masks + self.gsn.summ_mats + [self.job_summ_backward_map] +
                     [self.stage_act_vec] + [self.job_act_vec] + [self.adv] + [self.entropy_weight],
 
                     [stage_inputs] + [job_inputs] + [stage_valid_mask] + [job_valid_mask] +
@@ -660,7 +660,7 @@ def expand_act_on_state(state, sub_acts):
     sub_acts = tf.reshape(sub_acts, [1, 1, expand_dim])
     sub_acts = tf.tile(sub_acts, [1, 1, num_stages])
     sub_acts = tf.reshape(sub_acts, [1, num_stages * expand_dim, 1])
-    sub_acts = tf.tile(sub_acts, [batch_size, 1, 1])    # now the first tow dim of sub_acts are the same as state
+    sub_acts = tf.tile(sub_acts, [batch_size, 1, 1])    # now the first two dim of sub_acts are as the same as state's
 
     # concatenate
     concat_state = tf.concat([state, sub_acts], axis=2)   # dim2 = num_features + 1
@@ -676,23 +676,3 @@ def leaky_relu(features, alpha=0.3, name=None):
         features = ops.convert_to_tensor(features, name='features')
         alpha = ops.convert_to_tensor(alpha, name='alpha')
         return math_ops.maximum(alpha * features, features)
-
-
-def masked_outer_product(a, b, mask):
-    """
-    TODO: when to call?
-    :param a: of shape (batch_size, num_stages)
-    :param b: of shape (batch_size, num_exec_limit * num_jobs)
-    :param mask:
-    :return:
-    """
-    batch_size, num_stages = tf.shape(a)
-    num_limits = tf.shape(b)[1]
-    a = tf.reshape(a, [batch_size, num_stages, 1])
-    b = tf.reshape(b, [batch_size, 1, num_limits])
-    out_product = tf.reshape(a * b, [batch_size, -1])   # '-1' = num_stages * num_exec_limit
-
-    out_product = tf.transpose(out_product)
-    out_product = tf.boolean_mask(out_product, mask)
-    out_product = tf.transpose(out_product)
-    return out_product

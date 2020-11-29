@@ -397,7 +397,7 @@ class AvgRewardPerStep:
         self.reward_record, self.time_record = [], []
         self.reward_sum, self.time_sum = 0, 0
 
-    def add(self, reward, time):
+    def add(self, reward, time_slot):
         if self.count >= self.size:
             popped_reward = self.reward_record.pop(0)
             popped_time = self.time_record.pop(0)
@@ -406,9 +406,9 @@ class AvgRewardPerStep:
         else:
             self.count += 1
         self.reward_record.append(reward)
-        self.time_record.append(time)
+        self.time_record.append(time_slot)
         self.reward_sum += reward
-        self.time_sum += time
+        self.time_sum += time_slot
 
     def add_multi(self, reward_list, time_list):
         assert len(reward_list) == len(time_list)

@@ -520,6 +520,7 @@ class Executor:
 class FreeExecutors:
     """
     This class defines a dict, where the key is the job, the value is the set of bound executors.
+    These bound executors are 'free' to its corresponding job because they will be detached from the job.
     When the key is None, the value means the free executors that do not bind to any job (i.e. free executors pool).
     """
     def __init__(self, executors):

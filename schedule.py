@@ -33,7 +33,6 @@ class Schedule:
         self.stage_selected = set()
         self.reward_calculator = RewardCalculator()
 
-        # added by me
         self.exec_to_schedule = None
         self.src_job = None
         self.num_src_exec = -1
@@ -44,7 +43,9 @@ class Schedule:
 
     def step(self, next_stage, limit):
         """
-        One (scheduling event) step forward.
+        One (scheduling event) step forward: with given actions as input, do scheduling and return a new state.
+        :param next_stage: the next to-be-scheduled stage, get from scheduling algorithm
+        :param limit: the exec limit for the job of the next to-be-scheduled , get from scheduling algorithm
         """
         assert next_stage not in self.stage_selected
         self.stage_selected.add(next_stage)
@@ -55,8 +56,7 @@ class Schedule:
 
         # get the num of valid executors for dispatching
         if next_stage is not None:
-            use_exec = min(next_stage.num_tasks - next_stage.next_task_idx -
-                           self.exec_commit.stage_commit[next_stage] -
+            use_exec = min(next_stage.num_tasks - next_stage.next_task_idx - self.exec_commit.stage_commit[next_stage] -
                            self.moving_executors.count(next_stage), limit)
         else:
             use_exec = limit
@@ -70,17 +70,16 @@ class Schedule:
         if self.num_src_exec == 0:
             # a new scheduling round
             self.stage_selected.clear()
-            self.schedule()
+            self.schedule()        # all commitment all made, schedule these executors
 
         # run to the next event in the timeline
         while len(self.timeline) > 0 and self.num_src_exec == 0:
             # consult agent by putting executors in src_exec
-            time_slot, item = self.timeline.pop()
-            self.time_horizon.update(time_slot)  # forward to this time slot
+            new_time, item = self.timeline.pop()
+            self.time_horizon.update(new_time)  # forward to this time slot
 
             # according to the type of item, take different action
-            if isinstance(item, Task):
-                # task finish event
+            if isinstance(item, Task):                                             # task finish event
                 finished_task = item
                 stage = finished_task.stage
                 stage.num_finished_tasks += 1
@@ -104,8 +103,7 @@ class Schedule:
                     stage.job.finish_time = self.time_horizon.cur_time
                     self.remove_job(stage.job)
 
-            elif isinstance(item, Job):
-                # new job arrives event
+            elif isinstance(item, Job):                                            # new job arrives event
                 job = item
                 assert not job.arrived
                 job.arrived = True
@@ -115,12 +113,12 @@ class Schedule:
                 self.action_map = get_act2stage(self.jobs)
                 # dispatch existing free executors to this new job
                 if len(self.free_executors[None]) > 0:
+                    # dispatch free executors to the newly arrived job (if exist)
                     self.exec_to_schedule = utils.OrderedSet(self.free_executors[None])
                     self.src_job = None
                     self.num_src_exec = len(self.free_executors[None])
 
-            elif isinstance(item, Executor):
-                # the event that an executor arrives at some job at some time
+            elif isinstance(item, Executor):                                       # executor arrival event
                 executor = item
                 # get the destination (stage) of this executor
                 stage = self.moving_executors.pop(executor)
@@ -155,9 +153,6 @@ class Schedule:
         return self.observe(), reward, done
 
     def seed(self, seed):
-        """
-        TODO: when to call?
-        """
         self.np_random.seed(seed)
 
     def add_job(self, job):
@@ -178,14 +173,14 @@ class Schedule:
             return
         if frontier_changed:
             # consult all free executors
-            src_job = executor.job
+            src_job = executor.job       # get the job where the executor previously worked on
             # self.exec_commit[executor.stage] == self.exec_commit.commit[executor.stage] because of the __getitem__ func
             if len(self.exec_commit[executor.stage]) > 0:
-                # directly fulfill the commitment
+                # if this executor is already arranged, just directly fulfill the corresponding commitment
                 self.exec_to_schedule = {executor}
                 self.schedule()
             else:
-                # free this executor
+                # this executor is not arranged beforehand, free this executor and wait for scheduling
                 self.free_executors.add(src_job, executor)
             # executor.job may change after self.schedule(), update is necessary
             self.exec_to_schedule = utils.OrderedSet(self.free_executors[src_job])
@@ -211,14 +206,16 @@ class Schedule:
             stage = self.exec_commit.pop(src)
             executor = self.exec_to_schedule.pop()
 
+            # mark the executor as busy because it is scheduled
             if self.free_executors.contain_executor(executor.job, executor):
                 self.free_executors.remove(executor)
 
             if stage is None:
                 if executor.job is not None and any([not s.no_more_task for s in executor.job.stages]):
+                    # this stage is silent, make the executor idle
                     self.free_executors.add(executor.job, executor)
                 else:
-                    # this stage is silent, make the executor idle
+                    # no job or stage to dispatch, just put into the free pool
                     self.free_executors.add(None, executor)
 
             elif not stage.no_more_task:
@@ -241,8 +238,7 @@ class Schedule:
     def backup_schedule(self, executor):
         """
         This func is used as backup policy. We add this because a random policy or a learned policy in early
-        iterations might schedule no executor to jobs. This func makes sure that all executors are working conservative.
-
+        iterations might schedule no executor to jobs. This func makes sure that all executors are working conservatively.
         The agent should learn to not rely on this func.
         """
         backup_scheduled = False
@@ -299,10 +295,9 @@ class Schedule:
         exec_lmt = {}              # {job: int}
         for job in self.jobs:
             if self.src_job == job:
-                cur_exec = self.num_src_exec
+                exec_lmt[job] = len(job.executors) - self.num_src_exec
             else:
-                cur_exec = 0
-            exec_lmt[job] = len(job.executors) - cur_exec
+                exec_lmt[job] = len(job.executors)
         return exec_lmt
 
     def observe(self):
@@ -318,7 +313,7 @@ class Schedule:
         """
         Remove the job when it is finished.
         """
-        for executor in job.executors:
+        for executor in list(job.executors):
             executor.detach_job()
         self.exec_commit.remove_job(job)
         self.free_executors.remove_job(job)

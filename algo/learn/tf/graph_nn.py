@@ -18,7 +18,7 @@ class GraphCNN:
         self.input_dim = input_dim       # length of original feature x
         self.hidden_dims = hidden_dims   # dim of hidden layers of f and g
         self.output_dim = output_dim     # length of embedding feature e
-        self.max_depth = max_depth       # TODO: num of jobs
+        self.max_depth = max_depth       # maximum depth of root-leaf message passing
         self.activate_fn = activate_fn
         self.scope = scope
 
@@ -32,9 +32,9 @@ class GraphCNN:
         # g: e  -->  e
         self.agg_weights, self.agg_bias = init(self.output_dim, self.hidden_dims, self.output_dim, self.scope)
 
-        self.outputs = self.embedding()
+        self.outputs = self.get_embedding()
 
-    def embedding(self):
+    def get_embedding(self):
         """
         Embedding features are passing among stages (nodes) of each graph.
         The info is flowing from sink stages to source stages.
@@ -76,29 +76,30 @@ class GraphSNN:
         self.activate_fn = activate_fn
         self.scope = scope
 
-        self.levels = 2
-        self.summary_mats = [tf.sparse_placeholder(tf.float32, [None, None]) for _ in range(self.levels)]
-        self.dag_summ_weights, self.dag_summ_bias = init(self.input_dim, self.hidden_dims, self.output_dim, self.scope)
+        self.summ_levels = 2
+        self.summ_mats = [tf.sparse_placeholder(tf.float32, [None, None]) for _ in range(self.summ_levels)]
+        self.job_summ_weights, self.job_summ_bias = init(self.input_dim, self.hidden_dims, self.output_dim, self.scope)
         self.global_summ_weights, self.global_summ_bias = init(self.output_dim, self.hidden_dims, self.output_dim, self.scope)
 
-        self.summaries = self.summarize()
+        self.summaries = self.get_summarize()
 
-    def summarize(self):
+    def get_summarize(self):
         x = self.inputs
         summaries = []
-        s = x
+
         # DAG level summary
-        for layer in range(len(self.dag_summ_weights)):
-            s = tf.matmul(s, self.dag_summ_weights[layer]) + self.dag_summ_bias[layer]
+        s = x
+        for layer in range(len(self.job_summ_weights)):
+            s = tf.matmul(s, self.job_summ_weights[layer]) + self.job_summ_bias[layer]
             s = self.activate_fn(s)
-        s = tf.sparse_tensor_dense_matmul(self.summary_mats[0], s)
+        s = tf.sparse_tensor_dense_matmul(self.summ_mats[0], s)
         summaries.append(s)
 
         # global level summary
         for layer in range(len(self.global_summ_weights)):
             s = tf.matmul(s, self.global_summ_weights[layer]) + self.global_summ_bias[layer]
             s = self.activate_fn(s)
-        s = tf.sparse_tensor_dense_matmul(self.summary_mats[1], s)
+        s = tf.sparse_tensor_dense_matmul(self.summ_mats[1], s)
         summaries.append(s)
 
         return summaries
@@ -111,11 +112,13 @@ def init(input_dim, hidden_dims, output_dim, scope):
     weights, bias = [], []
     cur_in_dim = input_dim
 
+    # hidden layers param init
     for hid_dim in hidden_dims:
         weights.append(glorot_init(shape=[cur_in_dim, hid_dim], scope=scope))
         bias.append(zeros(shape=[hid_dim], scope=scope))
         cur_in_dim = hid_dim
 
+    # output layer param init
     weights.append(glorot_init(shape=[cur_in_dim, output_dim], scope=scope))
     bias.append(zeros(shape=[output_dim], scope=scope))
 
@@ -124,7 +127,7 @@ def init(input_dim, hidden_dims, output_dim, scope):
 
 def glorot_init(shape, dtype=tf.float32, scope='default'):
     """
-    The initialization method proposed by Xavier Glorot & Yoshua Bengio.
+    The initialization method proposed by Xavier Glorot & Yoshua Bengio in AISTATS '10.
     """
     with tf.variable_scope(scope):
         init_range = np.sqrt(6. / (shape[0] + shape[1]))

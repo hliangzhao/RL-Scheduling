@@ -35,7 +35,7 @@ class SparseMat:
 
     def to_tf_sparse_mat(self):
         indices = np.mat([self.row, self.col]).transpose()
-        return tf.SparseTensorValue(indices, self.data, self.shape)
+        return tf.SparseTensorValue(indices=indices, values=self.data, dense_shape=self.shape)
 
 
 def merge_sparse_mats(sparse_mats, depth):

@@ -153,7 +153,7 @@ class ReinforceAgent(Agent):
         self.entropy_loss /= tf.log(tf.cast(tf.shape(self.stage_act_probs)[1], tf.float32)) + tf.log(float(len(self.executor_levels)))
 
         # total loss
-        self.act_loss = self.adv_loss + self.entropy_weight * self.entropy_loss
+        self.total_loss = self.adv_loss + self.entropy_weight * self.entropy_loss
 
         # ======== claim params, gradients, optimizer, and model saver ========
         # params
@@ -165,20 +165,20 @@ class ReinforceAgent(Agent):
         self.input_params, self.set_params_op = self.define_params_op()
 
         # actor gradients
-        self.act_gradients = tf.gradients(self.act_loss, self.params)
+        self.act_gradients = tf.gradients(self.total_loss, self.params)
         # adaptive learning rate
         self.lr = tf.placeholder(tf.float32, shape=[])
         # optimizer
-        self.act_opt = self.optimizer(self.lr).minimize(self.act_loss)
+        self.act_opt = self.optimizer(self.lr).minimize(self.total_loss)
         # apply gradients
         self.apply_grads = self.optimizer(self.lr).apply_gradients(zip(self.act_gradients, self.params))
         # define network param saver and where to restore models
-        self.saver = tf.train.Saver(max_to_keep=args.num_saved_models)
+        self.model_saver = tf.train.Saver(max_to_keep=args.num_saved_models)
 
         # ====== param init (load from saved model in default) ======
         self.sess.run(tf.global_variables_initializer())
         if args.saved_model is not None:
-            self.saver.restore(self.sess, args.saved_model)
+            self.model_saver.restore(self.sess, args.saved_model)
 
     # used for synchronize master params to worker params
     def get_params(self):
@@ -280,7 +280,7 @@ class ReinforceAgent(Agent):
         This func gives the design of raw (feature) input.
         """
         jobs, src_job, num_src_exec, frontier_stages, exec_limits, exec_commit, moving_executors, action_map = obs
-        total_num_stages = sum([job.num_stages for job in jobs])
+        total_num_stages = int(sum([job.num_stages for job in jobs]))
 
         # set stage_inputs and job_inputs
         stage_inputs = np.zeros([total_num_stages, self.stage_input_dim])
@@ -302,7 +302,7 @@ class ReinforceAgent(Agent):
             elif src is None:
                 job = None
             else:
-                print('source', src, 'unknown!')
+                print('Source', src, 'unknown!')
                 exit(1)
             for stage in exec_commit.commit[src]:
                 if stage is not None and stage.job != job:
@@ -355,14 +355,14 @@ class ReinforceAgent(Agent):
                 job_valid_mask[0, base + lvl] = 1
             base += self.executor_levels[-1]
 
-        total_num_stages = sum([job.num_stages for job in jobs])
+        total_num_stages = int(sum([job.num_stages for job in jobs]))
         stage_valid_mask = np.zeros([1, total_num_stages])
         for stage in frontier_stages:
             if job_valid[stage.job]:
                 act = action_map.inverse_map[stage]
                 stage_valid_mask[0, act] = 1
 
-        return job_valid_mask, stage_valid_mask
+        return stage_valid_mask, job_valid_mask
 
     @staticmethod
     def get_unfinished_stages_summ_mat(jobs):
@@ -480,8 +480,8 @@ class ReinforceAgent(Agent):
         return stage, use_exec
 
     # save model to file
-    def save_model(self, file_path):
-        return self.sess.run(self.sess, file_path)
+    def save_model(self, save_path):
+        return self.sess.run(self.sess, save_path)
 
 
 class MsgPassing:
@@ -572,7 +572,7 @@ class MsgPassing:
     @staticmethod
     def get_bottom_up_paths(job):
         """
-        The paths start from all leave nodes and end with frontier unfinished nodes (nodes whose parents are finished).
+        The paths start from all leave stages and end with frontier unfinished stages (stages whose parents are finished).
         """
         num_stages = job.num_stages
         msg_mats = []

@@ -51,7 +51,7 @@ def get_piecewise_linear_fit_bl(all_cum_rewards, all_time):
                 baseline += all_cum_rewards[i][-1]
             else:
                 baseline += (all_cum_rewards[i][idx] - all_cum_rewards[i][idx - 1]) / (all_time[i][idx] - all_time[i][idx - 1]) * \
-                            (t - all_time[i][idx] + all_cum_rewards[i][idx])
+                            (t - all_time[i][idx]) + all_cum_rewards[i][idx]
         baseline_values[t] = baseline / float(len(all_time))
     baselines = []
     for time in all_time:

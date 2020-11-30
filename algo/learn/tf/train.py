@@ -14,7 +14,6 @@ import algo.learn.baselines as bl
 from params import args
 import utils
 
-
 # only show the errors and the warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -44,14 +43,14 @@ def train_master():
     for i in range(args.num_worker_agents):
         worker_agents[i].start()
 
-    # GPU config
-    config = tf.ConfigProto(
-        device_count={'GPU': args.master_num_gpu},
-        gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=args.master_gpu_fraction)
-    )
-
     # start the session
-    sess = tf.Session(config=config)
+    sess = tf.Session(
+        config=tf.ConfigProto(
+            # GPU config
+            device_count={'GPU': args.master_num_gpu},
+            gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=args.master_gpu_fraction)
+        )
+    )
 
     # setup master agent
     master_agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
@@ -59,7 +58,7 @@ def train_master():
     # setup tf logger
     tf_logger = assist.Logger(
         sess,
-        var_list=['actor_loss', 'entropy', 'value_loss', 'episode_length', 'avg_reward_per_sec', 'sum_reward',
+        var_list=['total_loss', 'entropy', 'value_loss', 'episode_length', 'avg_reward_per_sec', 'sum_reward',
                   'reset_prob', 'num_jobs', 'reset_hit', 'avg_job_duration', 'entropy_weight']
     )
 
@@ -112,7 +111,7 @@ def train_master():
             # the try condition in train_worker() breaks, and throw out this rollout
             for i in range(args.num_worker_agents):       # TODO: log this event
                 adv_queues[i].put(None)
-            continue                       # TODO: why add continue?
+            continue                       # goto next epoch directly
 
         # compute differential reward
         all_cum_reward = []
@@ -163,8 +162,8 @@ def train_master():
 
         # logging
         tf_logger.log(
-            ep,
-            [
+            epoch_idx=ep,
+            values=[
                 np.mean(all_action_loss),
                 np.mean(all_entropy),
                 np.mean(all_value_loss),
@@ -202,22 +201,24 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
     """
     # config tf device settings
     tf.set_random_seed(agent_id)
-    config = tf.ConfigProto(
-        device_count={'GPU": args.worker_num_gpu'},
-        gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=args.worker_gpu_fraction)
+    sess = tf.Session(                      # TODO: no sess close found
+        config=tf.ConfigProto(
+            device_count={'GPU": args.worker_num_gpu'},
+            gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=args.worker_gpu_fraction)
+        )
     )
-    sess = tf.Session(config=config)    # TODO: no sess close found
 
     # set up schedule event and worker agent
     schedule = Schedule()
-    agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
-                           args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps)
+    worker_agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
+                                  args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps)
 
     while True:
         agent_params, seed, max_time, entropy_weight = param_queue.get()
         # synchronize model
-        agent.set_params(input_params=agent_params)
+        worker_agent.set_params(input_params=agent_params)
         # reset scheduling event
+        schedule.seed(seed)
         schedule.reset(max_time)
         # setup experience pool
         experience_pool = {
@@ -247,7 +248,7 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
             experience_pool['cur_time'].append(schedule.time_horizon.cur_time)
 
             while not done:
-                stage, use_exec = invoke(agent, obs, experience_pool)
+                stage, use_exec = invoke(worker_agent, obs, experience_pool)
                 # one step forward
                 obs, reward, done = schedule.step(stage, use_exec)
                 if stage is not None:
@@ -275,9 +276,9 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
                 continue
 
             # compute gradients
-            agent_gradients, loss = compute_agent_gradients(agent, experience_pool, batch_adv, entropy_weight)
+            worker_gradient, loss = compute_agent_gradients(worker_agent, experience_pool, batch_adv, entropy_weight)
             # report gradients to master
-            gradient_queue.put([agent_gradients, loss])
+            gradient_queue.put([worker_gradient, loss])
 
         except AssertionError:
             reward_queue.put(None)
@@ -361,6 +362,7 @@ def compute_agent_gradients(reinforce_agent, experience_pool, batch_adv, entropy
         gcn_masks = experience_pool['gcn_masks'][bt]
         summ_backward_map = experience_pool['job_summ_backward_map'][bt]
 
+        # give an episode of experience and expand sparse mats
         batch_size = stage_act_vec.shape[0]
         extended_gcn_mats = assist.expand_sparse_mats(gcn_mats, batch_size)
         extended_gcn_masks = [np.tile(m, (batch_size, 1)) for m in gcn_masks]
@@ -483,3 +485,7 @@ def discount(x, gamma):
     for i in reversed(range(len(x) - 1)):
         out[i] = x[i] + gamma * out[i + 1]
     return out
+
+
+# call the train func
+train_master()

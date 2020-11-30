@@ -42,6 +42,12 @@ def test():
     all_total_reward = {scheme: [] for scheme in args.test_schemes}
     for exp in range(args.num_exp):
         for scheme in args.test_schemes:
+            if scheme == 'reinforce':
+                print('Testing reinforce agent ...')
+            elif scheme == 'dynamic':
+                print('Testing dynamic agent ...')
+            else:
+                print('Testing fifo agent ...')
             schedule.seed(args.num_epochs + exp)
             schedule.reset()
             agent = agents[scheme]
@@ -77,3 +83,7 @@ def test():
         plt.legend(args.test_schemes)
         fig.savefig(args.result_folder + 'total_reward_cdf.png', dpi=100)
         plt.close(fig)
+
+
+# call the test func
+test()

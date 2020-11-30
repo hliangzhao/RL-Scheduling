@@ -10,7 +10,7 @@ from env import Stage, Job
 
 class DynamicAgent(Agent):
     """
-    This policy dynamically partition the cluster resource.
+    This policy implements a heuristic, which dynamically partition the cluster resource.
     """
     def __init__(self):
         super(DynamicAgent, self).__init__()
@@ -34,19 +34,19 @@ class DynamicAgent(Agent):
         for stage in moving_executors.moving_executors.values():
             exec_map[stage.job] += 1
         # count exec_commit in
-        for s in exec_commit.commit:
-            if isinstance(s, Job):
-                job = s
-            elif isinstance(s, Stage):
-                job = s.job
-            elif s is None:
+        for item in exec_commit.commit:
+            if isinstance(item, Job):
+                job = item
+            elif isinstance(item, Stage):
+                job = item.job
+            elif item is None:
                 job = None
             else:
-                print('src', s, 'unknown')
+                print('Source', item, 'unknown')
                 exit(1)
-            for stage in exec_commit.commit[s]:
+            for stage in exec_commit.commit[item]:
                 if stage is not None and stage.job != job:
-                    exec_map[stage.job] += exec_commit.commit[s][stage]
+                    exec_map[stage.job] += exec_commit.commit[item][stage]
 
         if src_job is not None:
             for stage in src_job.frontier_stages:
@@ -72,8 +72,7 @@ class DynamicAgent(Agent):
                 if next_stage is not None:
                     use_exec = min(
                         # TODO: should be next_stage?
-                        stage.num_tasks - stage.next_task_idx - exec_commit.stage_commit[
-                            stage] - moving_executors.count(stage),
+                        stage.num_tasks - stage.next_task_idx - exec_commit.stage_commit[stage] - moving_executors.count(stage),
                         exec_cap - exec_map[job],
                         num_src_exec
                     )

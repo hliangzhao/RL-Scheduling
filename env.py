@@ -124,7 +124,7 @@ class Stage:
         self.next_task_idx = 0         # the next wait-for-scheduling task' index
         self.no_more_task = False
         self.all_tasks_done = False
-        self.finish_time = np.inf                # TODO: no start_time? When to set finish_time?
+        self.finish_time = np.inf
 
         self.executors = utils.OrderedSet()      # executors which marked as running in this stage
 
@@ -300,7 +300,7 @@ class Job:
 
         self.arrived = False
         self.finished = False
-        self.start_time = None
+        self.start_time = None            # job.start_time is the arrival time of this job
         self.finish_time = np.inf
 
         # map an executor to an interval
@@ -520,8 +520,11 @@ class Executor:
 class FreeExecutors:
     """
     This class defines a dict, where the key is the job, the value is the set of bound executors.
-    These bound executors are 'free' to its corresponding job because they will be detached from the job.
-    When the key is None, the value means the free executors that do not bind to any job (i.e. free executors pool).
+    What the key-value pairs mean:
+        - These bound executors (value)) are 'free' currently (and temporarily) but are decided to be dispatched to
+        the corresponding job (key).
+        - When the key is None, the value means the free executors that do not bind to any job, which means these jobs
+        are free to be dispatched and scheduled to any stage of jobs exist in system now.
     """
     def __init__(self, executors):
         self.free_executors = {None: utils.OrderedSet()}
@@ -589,7 +592,7 @@ class FreeExecutors:
 
 class MovingExecutors:
     """
-    This class temporarily stores the next-to-go stage of some executors which are not free at that time.
+    This class **temporarily** stores the next-to-go stage of some executors which are not free at that time.
     We need it because we do not want to invoke the agent too many times (which affects the performance obviously).
     """
     def __init__(self):

@@ -1,6 +1,5 @@
 """
 This module defines the agent.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 
 

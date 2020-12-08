@@ -1,20 +1,21 @@
 """
 This module defines the funcs to multi-process training the reinforce agent.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 import tensorflow as tf
 import os
 import time
 import multiprocessing as mp
 import numpy as np
-from schedule import Schedule
-from algo.learn.tf.reinforce_agent import ReinforceAgent, leaky_relu
-from algo.learn.tf import assist
+from algo.learn.schedule import Schedule
+from algo.learn.reinforce_agent import ReinforceAgent, leaky_relu
+from algo.learn.logger import Logger
 import algo.learn.baselines as bl
+from algo.learn.avg_reward import AvgPerStepReward
+from algo.learn import sparse_op
 from params import args
 import utils
 
-# only show the errors and the warnings
+# only show the errors and the warnings in tf logs
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
@@ -36,8 +37,7 @@ def train_master():
     worker_agents = []
     for i in range(args.num_worker_agents):
         worker_agents.append(
-            mp.Process(target=train_worker,
-                       args=(i, param_queues[i], reward_queues[i], adv_queues[i], gradients_queues[i]))
+            mp.Process(target=train_worker, args=(i, param_queues[i], reward_queues[i], adv_queues[i], gradients_queues[i]))
         )
     # start training
     for i in range(args.num_worker_agents):
@@ -56,14 +56,14 @@ def train_master():
     master_agent = ReinforceAgent(sess, args.stage_input_dim, args.job_input_dim, args.hidden_dims, args.output_dim,
                                   args.max_depth, range(1, args.exec_cap + 1), activate_fn=leaky_relu, eps=args.eps)
     # setup tf logger
-    tf_logger = assist.Logger(
+    tf_logger = Logger(
         sess,
         var_list=['total_loss', 'entropy', 'value_loss', 'episode_length', 'avg_reward_per_sec', 'sum_reward',
                   'reset_prob', 'num_jobs', 'reset_hit', 'avg_job_duration', 'entropy_weight']
     )
 
     # more init
-    avg_reward_calculator = AvgRewardPerStep(args.average_reward_storage_size)
+    avg_reward_calculator = AvgPerStepReward(args.average_reward_storage_size)
     entropy_weight = args.entropy_weight_init
     episode_reset_prob = args.reset_prob
 
@@ -79,7 +79,7 @@ def train_master():
                 [master_params, args.seed + ep, max_time, entropy_weight]
             )
         # store for advantage computation
-        all_rewards, all_diff_times, all_times, all_num_finished_jobs, all_avg_job_duration, all_reset_hit = [[]] * 5
+        all_rewards, all_diff_times, all_times, all_num_finished_jobs, all_avg_job_duration, all_reset_hit = [], [], [], [], [], []
 
         t1 = time.time()
 
@@ -102,7 +102,7 @@ def train_master():
             all_avg_job_duration.append(avg_job_duration)
             all_reset_hit.append(reset_hit)
 
-            avg_reward_calculator.add_multi_filter_zeros(batch_reward, diff_time)
+            avg_reward_calculator.add_list_filter_zero(batch_reward, diff_time)
 
         t2 = time.time()
         print('Got reward from workers in', t2 - t1, 'secs')
@@ -115,12 +115,12 @@ def train_master():
 
         # compute differential reward
         all_cum_reward = []
-        avg_reward_per_step = avg_reward_calculator.get_avg_reward_per_step()
+        avg_per_step_reward = avg_reward_calculator.get_avg_per_step_reward()
         for i in range(args.num_worker_agents):
             if args.diff_reward_enabled:
                 # differential reward
                 rewards = np.array(
-                    [r - avg_reward_per_step * t for (r, t) in zip(all_rewards[i], all_diff_times[i])]
+                    [r - avg_per_step_reward * t for (r, t) in zip(all_rewards[i], all_diff_times[i])]
                 )
             else:
                 # regular reward
@@ -142,7 +142,7 @@ def train_master():
         print('Advantage ready in', t3 - t2, 'secs')
 
         # need-to-log values
-        all_action_loss, all_entropy, all_value_loss = [[]] * 3
+        all_action_loss, all_entropy, all_value_loss = [], [], []
 
         # collect gradients from workers
         master_gradient = []
@@ -168,7 +168,7 @@ def train_master():
                 np.mean(all_entropy),
                 np.mean(all_value_loss),
                 np.mean([len(b) for b in baselines]),
-                avg_reward_per_step * args.reward_scale,
+                avg_per_step_reward * args.reward_scale,
                 np.mean([cr[0] for cr in all_cum_reward]),
                 episode_reset_prob,
                 np.mean(all_num_finished_jobs),
@@ -183,7 +183,7 @@ def train_master():
         episode_reset_prob = decrease_var(episode_reset_prob, args.reset_prob_min, args.reset_prob_decay)
 
         if ep % args.model_save_interval == 0:
-            master_agent.save_model(args.model_folder + 'model_of_epoch_' + str(ep))
+            master_agent.save_model(args.model_folder + 'model_epoch_' + str(ep))
 
         # utils.progress_bar(count=ep, total=args.num_epochs)
     sess.close()
@@ -192,18 +192,12 @@ def train_master():
 def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue):
     """
     Define how one reinforce agent is trained.
-    :param agent_id:
-    :param param_queue:
-    :param reward_queue:
-    :param adv_queue:
-    :param gradient_queue:
-    :return:
     """
     # config tf device settings
     tf.set_random_seed(agent_id)
-    sess = tf.Session(                      # TODO: no sess close found
+    sess = tf.Session(
         config=tf.ConfigProto(
-            device_count={'GPU": args.worker_num_gpu'},
+            device_count={'GPU': args.worker_num_gpu},
             gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=args.worker_gpu_fraction)
         )
     )
@@ -221,22 +215,15 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
         schedule.seed(seed)
         schedule.reset(max_time)
         # setup experience pool
-        experience_pool = {
-            'stage_inputs': [],
-            'job_inputs': [],
-            'summ_mats': [],
-            'running_jobs_mat': [],
-            'stage_act_vec': [],
-            'job_act_vec': [],
-            'stage_valid_mask': [],
-            'job_valid_mask': [],
-            'jobs_changed': [],
-            'gcn_mats': [],
-            'gcn_masks': [],
+        exp_pool = {
+            'stage_inputs': [], 'job_inputs': [],
+            'gcn_mats': [], 'gcn_masks': [],
+            'summ_mats': [], 'running_jobs_mat': [],
             'job_summ_backward_map': [],
-
-            'reward': [],
-            'cur_time': []
+            'stage_act_vec': [], 'job_act_vec': [],
+            'stage_valid_mask': [], 'job_valid_mask': [],
+            'reward': [], 'cur_time': [],
+            'jobs_changed': [],
         }
 
         try:
@@ -245,29 +232,29 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
             # we manually catch the error and throw out the rollout
             obs = schedule.observe()
             done = False
-            experience_pool['cur_time'].append(schedule.time_horizon.cur_time)
+            exp_pool['cur_time'].append(schedule.wall_time.cur_time)
 
             while not done:
-                stage, use_exec = invoke(worker_agent, obs, experience_pool)
+                stage, use_exec = invoke(worker_agent, obs, exp_pool)
                 # one step forward
                 obs, reward, done = schedule.step(stage, use_exec)
                 if stage is not None:
                     # this action is valid, store the reward and time
-                    experience_pool['reward'].append(reward)
-                    experience_pool['cur_time'].append(schedule.time_horizon.cur_time)
-                elif len(experience_pool['reward']) > 0:
+                    exp_pool['reward'].append(reward)
+                    exp_pool['cur_time'].append(schedule.wall_time.cur_time)
+                elif len(exp_pool['reward']) > 0:
                     # if we skip the reward when no legal stage is chosen, the agent will exhaustively pick all stages
                     # in one scheduling event to avoid negative reward
-                    experience_pool['reward'][-1] += reward
-                    experience_pool['cur_time'][-1] = schedule.time_horizon.cur_time
-            assert len(experience_pool['stage_inputs']) == len(experience_pool['reward'])
-            reward_queue.put(
-                [experience_pool['reward']],
-                [experience_pool['cur_time']],
+                    exp_pool['reward'][-1] += reward
+                    exp_pool['cur_time'][-1] = schedule.wall_time.cur_time
+            assert len(exp_pool['stage_inputs']) == len(exp_pool['reward'])
+            reward_queue.put([
+                exp_pool['reward'],
+                exp_pool['cur_time'],
                 len(schedule.finished_jobs),
                 np.mean([job.finish_time - job.start_time for job in schedule.finished_jobs]),
-                schedule.time_horizon.cur_time >= schedule.max_time
-            )
+                schedule.wall_time.cur_time >= schedule.max_time
+            ])
 
             # get advantage term from master
             batch_adv = adv_queue.get()
@@ -276,7 +263,7 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
                 continue
 
             # compute gradients
-            worker_gradient, loss = compute_agent_gradients(worker_agent, experience_pool, batch_adv, entropy_weight)
+            worker_gradient, loss = compute_agent_gradients(worker_agent, exp_pool, batch_adv, entropy_weight)
             # report gradients to master
             gradient_queue.put([worker_gradient, loss])
 
@@ -285,30 +272,30 @@ def train_worker(agent_id, param_queue, reward_queue, adv_queue, gradient_queue)
             adv_queue.get()
 
 
-def invoke(reinforce_agent, obs, experience_pool):
+def invoke(reinforce_agent, obs, exp_pool):
     """
-    Feed the agent with observation, and parse the action returned from it.
-    Further, record this (s, a) into experience pool for training.
+    Feed the reinforce agent with observation, and parse the actions it returns.
+    Further, record this (s, a) into experience pool for the following training.
     """
     jobs, src_job, num_src_exec, frontier_stages, exec_limits, exec_commit, moving_executors, action_map = obs
     if len(frontier_stages) == 0:  # no act
         return None, num_src_exec
-    stage_acts, job_acts, stage_act_probs, job_act_probs, stage_inputs, job_inputs, stage_valid_mask, job_valid_mask, \
+    stage_act, job_act, stage_act_probs, job_act_probs, stage_inputs, job_inputs, stage_valid_mask, job_valid_mask, \
         gcn_mats, gcn_masks, summ_mats, running_jobs_mat, job_summ_backward_map, exec_map, jobs_changed = reinforce_agent.invoke_model(obs)
     if sum(stage_valid_mask[0, :]) == 0:  # no valid stage to assign
         return None, num_src_exec
 
-    assert stage_valid_mask[0, stage_acts[0]] == 1
+    assert stage_valid_mask[0, stage_act[0]] == 1
     # parse stage action, get the to-be-scheduled stage
-    stage = action_map[stage_acts[0]]
+    stage = action_map[stage_act[0]]
     # find the corresponding job
     job_idx = jobs.index(stage.job)
-    assert job_valid_mask[0, job_acts[0, job_idx] + len(reinforce_agent.executor_levels) * job_idx] == 1
+    assert job_valid_mask[0, job_act[0, job_idx] + len(reinforce_agent.executor_levels) * job_idx] == 1
     # parse exec limit action
     if stage.job is src_job:
-        agent_exec_act = reinforce_agent.executor_levels[job_acts[0, job_idx]] - exec_map[stage.job] + num_src_exec
+        agent_exec_act = reinforce_agent.executor_levels[job_act[0, job_idx]] - exec_map[stage.job] + num_src_exec
     else:
-        agent_exec_act = reinforce_agent.executor_levels[job_acts[0, job_idx]] - exec_map[stage.job]
+        agent_exec_act = reinforce_agent.executor_levels[job_act[0, job_idx]] - exec_map[stage.job]
     use_exec = min(
         stage.num_tasks - stage.next_task_idx - exec_commit.stage_commit[stage] - moving_executors.count(stage),
         agent_exec_act,
@@ -317,30 +304,30 @@ def invoke(reinforce_agent, obs, experience_pool):
 
     # store the action vec into experience
     stage_act_vec = np.zeros(stage_act_probs.shape)
-    stage_act_vec[0, stage_acts[0]] = 1
+    stage_act_vec[0, stage_act[0]] = 1
     job_act_vec = np.zeros(job_act_probs.shape)
-    job_act_vec[0, job_idx, job_acts[0, job_idx]] = 1
+    job_act_vec[0, job_idx, job_act[0, job_idx]] = 1
 
     # store experience into pool
-    experience_pool['stage_inputs'].append(stage_inputs)
-    experience_pool['job_inputs'].append(job_inputs)
-    experience_pool['summ_mats'].append(summ_mats)
-    experience_pool['running_jobs_mat'].append(running_jobs_mat)
-    experience_pool['stage_act_vec'].append(stage_act_vec)
-    experience_pool['job_act_vec'].append(job_act_vec)
-    experience_pool['stage_valid_mask'].append(stage_valid_mask)
-    experience_pool['job_valid_mask'].append(job_valid_mask)
-    experience_pool['jobs_changed'].append(jobs_changed)
+    exp_pool['stage_inputs'].append(stage_inputs)
+    exp_pool['job_inputs'].append(job_inputs)
+    exp_pool['summ_mats'].append(summ_mats)
+    exp_pool['running_jobs_mat'].append(running_jobs_mat)
+    exp_pool['stage_act_vec'].append(stage_act_vec)
+    exp_pool['job_act_vec'].append(job_act_vec)
+    exp_pool['stage_valid_mask'].append(stage_valid_mask)
+    exp_pool['job_valid_mask'].append(job_valid_mask)
+    exp_pool['jobs_changed'].append(jobs_changed)
     if jobs_changed:
-        experience_pool['gcn_mats'].append(gcn_mats)
-        experience_pool['gcn_masks'].append(gcn_masks)
-        experience_pool['job_summ_backward_map'].append(job_summ_backward_map)
+        exp_pool['gcn_mats'].append(gcn_mats)
+        exp_pool['gcn_masks'].append(gcn_masks)
+        exp_pool['job_summ_backward_map'].append(job_summ_backward_map)
 
     return stage, use_exec
 
 
-def compute_agent_gradients(reinforce_agent, experience_pool, batch_adv, entropy_weight):
-    batch_points = truncate_experiences(experience_pool['jobs_changed'])
+def compute_agent_gradients(reinforce_agent, exp_pool, batch_adv, entropy_weight):
+    batch_points = truncate_experiences(exp_pool['jobs_changed'])
     all_gradients = []
     all_loss = [[], [], 0]
 
@@ -349,25 +336,30 @@ def compute_agent_gradients(reinforce_agent, experience_pool, batch_adv, entropy
         bt_end = batch_points[bt + 1]
 
         # use one piece of experience
-        stage_inputs = np.vstack(experience_pool['stage_inputs'][bt_start: bt_end])
-        job_inputs = np.vstack(experience_pool['job_inputs'][bt_start: bt_end])
-        stage_act_vec = np.vstack(experience_pool['stage_act_vec'][bt_start: bt_end])
-        job_act_vec = np.vstack(experience_pool['job_act_vec'][bt_start: bt_end])
-        stage_valid_mask = np.vstack(experience_pool['stage_valid_mask'][bt_start: bt_end])
-        job_valid_mask = np.vstack(experience_pool['job_valid_mask'][bt_start: bt_end])
-        summ_mats = experience_pool['summ_mats'][bt_start: bt_end]
-        running_job_mats = experience_pool['running_jobs_mat'][bt_start: bt_end]
+        stage_inputs = np.vstack(exp_pool['stage_inputs'][bt_start: bt_end])
+        job_inputs = np.vstack(exp_pool['job_inputs'][bt_start: bt_end])
+        stage_act_vec = np.vstack(exp_pool['stage_act_vec'][bt_start: bt_end])
+        job_act_vec = np.vstack(exp_pool['job_act_vec'][bt_start: bt_end])
+        stage_valid_mask = np.vstack(exp_pool['stage_valid_mask'][bt_start: bt_end])
+        job_valid_mask = np.vstack(exp_pool['job_valid_mask'][bt_start: bt_end])
+        summ_mats = exp_pool['summ_mats'][bt_start: bt_end]
+        running_job_mats = exp_pool['running_jobs_mat'][bt_start: bt_end]
         adv = batch_adv[bt_start: bt_end, :]
-        gcn_mats = experience_pool['gcn_mats'][bt]
-        gcn_masks = experience_pool['gcn_masks'][bt]
-        summ_backward_map = experience_pool['job_summ_backward_map'][bt]
+        gcn_mats = exp_pool['gcn_mats'][bt]
+        gcn_masks = exp_pool['gcn_masks'][bt]
+        summ_backward_map = exp_pool['job_summ_backward_map'][bt]
 
-        # give an episode of experience and expand sparse mats
+        # given an episode of experience (advantage computed from baseline)
         batch_size = stage_act_vec.shape[0]
-        extended_gcn_mats = assist.expand_sparse_mats(gcn_mats, batch_size)
+        # expand sparse adj_mats
+        extended_gcn_mats = sparse_op.expand_sparse_mats(gcn_mats, batch_size)
+        # extended masks
+        # (on the dimension according to extended adj_mat)
         extended_gcn_masks = [np.tile(m, (batch_size, 1)) for m in gcn_masks]
-        extended_summ_mats = assist.merge_and_extend_sparse_mats(summ_mats)
-        extended_running_job_mats = assist.merge_and_extend_sparse_mats(running_job_mats)
+        # expand sparse summ_mats
+        extended_summ_mats = sparse_op.merge_and_extend_sparse_mats(summ_mats)
+        # expand sparse running_dag_mats
+        extended_running_job_mats = sparse_op.merge_and_extend_sparse_mats(running_job_mats)
 
         # compute gradients
         act_gradients, loss = reinforce_agent.get_gradients(
@@ -387,46 +379,6 @@ def compute_agent_gradients(reinforce_agent, experience_pool, batch_adv, entropy
     gradients = aggregate_gradients(all_gradients)
 
     return gradients, all_loss
-
-
-class AvgRewardPerStep:
-    """
-    TODO: how to understand time?
-    """
-    def __init__(self, size):
-        self.size = size
-        self.count = 0
-        self.reward_record, self.time_record = [], []
-        self.reward_sum, self.time_sum = 0, 0
-
-    def add(self, reward, time_slot):
-        if self.count >= self.size:
-            popped_reward = self.reward_record.pop(0)
-            popped_time = self.time_record.pop(0)
-            self.reward_sum -= popped_reward
-            self.time_sum -= popped_time
-        else:
-            self.count += 1
-        self.reward_record.append(reward)
-        self.time_record.append(time_slot)
-        self.reward_sum += reward
-        self.time_sum += time_slot
-
-    def add_multi(self, reward_list, time_list):
-        assert len(reward_list) == len(time_list)
-        for i in range(len(reward_list)):
-            self.add(reward_list[i], time_list[i])
-
-    def add_multi_filter_zeros(self, reward_list, time_list):
-        assert len(reward_list) == len(time_list)
-        for i in range(len(reward_list)):
-            if time_list[i] != 0:
-                self.add(reward_list[i], time_list[i])
-            else:
-                assert reward_list[i] == 0
-
-    def get_avg_reward_per_step(self):
-        return float(self.reward_sum) / float(self.time_sum)
 
 
 # ======= the following are auxiliary funcs for model training =======

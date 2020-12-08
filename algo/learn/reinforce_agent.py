@@ -1,8 +1,7 @@
 """
 This module defines the REINFORCE agent.
 This agent consists of a graph neural network and a policy network, and is trained through REINFORCE algorithm.
-Implemented with tensorflow 1.14.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
+Implemented with tensorflow 1.15.
 """
 import numpy as np
 import bisect
@@ -12,9 +11,10 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from params import args
 from algo.agent import Agent
-from env import Job, Stage
-from algo.learn.tf import graph_nn, assist
-import utils
+from spark_env.job import Job
+from spark_env.stage import Stage
+from algo.learn import graph_nn
+from algo.learn.msg_passing import MsgPassing
 
 
 class ReinforceAgent(Agent):
@@ -23,22 +23,11 @@ class ReinforceAgent(Agent):
         """
         Initialization the agent. In this init, we define the basic parameters such as stage and job raw feature dim.
         We also define the computation graph for tf vars.
-        :param sess:
-        :param stage_input_dim:
-        :param job_input_dim:
-        :param hidden_dims:
-        :param output_dim:
-        :param max_depth:
-        :param executor_levels:
-        :param activate_fn:
-        :param eps:
-        :param optimizer:
-        :param scope:
         """
         super(ReinforceAgent, self).__init__()
         self.sess = sess
-        self.stage_input_dim = stage_input_dim     # TODO; is fixed as 5
-        self.job_input_dim = job_input_dim         # TODO: is fixed as 3
+        self.stage_input_dim = stage_input_dim
+        self.job_input_dim = job_input_dim
         self.hidden_dims = hidden_dims
         self.output_dim = output_dim
         self.executor_levels = executor_levels
@@ -49,30 +38,32 @@ class ReinforceAgent(Agent):
         self.scope = scope
 
         self.msg_passing = MsgPassing()
-        # dim 0 = total_num_stages
+        # dim 0 = total_num_stages or batch_size?
         self.stage_inputs = tf.placeholder(tf.float32, [None, self.stage_input_dim])           # raw input feature for stages
-        # dim 0 = total_num_jobs
+        # dim 0 = total_num_jobs or batch_size?
         self.job_inputs = tf.placeholder(tf.float32, [None, self.job_input_dim])               # raw input feature for jobs
         self.gcn = graph_nn.GraphCNN(
             self.stage_inputs, self.stage_input_dim, self.hidden_dims, self.output_dim,
             self.max_depth, self.activate_fn, self.scope
         )
         self.gsn = graph_nn.GraphSNN(
+            # x_v^i and e_v^i are inputs of DAG summary
             tf.concat([self.stage_inputs, self.gcn.outputs], axis=1),
-            self.stage_input_dim + self.output_dim, self.hidden_dims, self.output_dim,
-            self.activate_fn, self.scope
+            # dim(x_v^i) + dim(e_v^i)
+            self.stage_input_dim + self.output_dim,
+            self.hidden_dims, self.output_dim, self.activate_fn, self.scope
         )
         # valid mask for stage action, of shape (batch_size, total_num_stages)
         self.stage_valid_mask = tf.placeholder(tf.float32, [None, None])                       # raw input to indicate stage validation
         # valid mask for executor limit on jobs, of shape (batch_size, num_jobs * num_exec_limits)
         self.job_valid_mask = tf.placeholder(tf.float32, [None, None])                         # raw input to indicate job validation
         # map back the job summarization to each stage, of shape (total_num_stages, num_jobs)
-        self.job_summ_backward_map = tf.placeholder(tf.float32, [None, None])                  # raw input to indicate the job each stage belongs to
+        self.job_summ_backward_map = tf.placeholder(tf.float32, [None, None])                  # raw input to indicate the job which each stage belongs to
 
         # ======= the following part defines the forwarding computation graph =======
-        # map gcn outputs and raw_inputs to to action probability distribution
+        # map gcn outputs and raw_inputs to action probability distribution
         # stage_act_probs: of shape (batch_size, total_num_stages)
-        # TODO: job_act_probs: should be of shape (batch_size, total_num_jobs, num_limits)?
+        # job_act_probs: of shape (batch_size, total_num_jobs, num_limits)
         self.stage_act_probs, self.job_act_probs = self.actor_network(
             self.stage_inputs, self.gcn.outputs, self.job_inputs,
             self.gsn.summaries[0], self.gsn.summaries[1],
@@ -93,12 +84,13 @@ class ReinforceAgent(Agent):
         noise = tf.random_uniform(tf.shape(logits))
         self.stage_acts = tf.argmax(logits - tf.log(-tf.log(noise)), 1)
 
-        # get next job
+        # get executor limit of each job
         # job_acts is of shape (batch_size, total_num_jobs, 1)
         logits = tf.log(self.job_act_probs)
         noise = tf.random_uniform(tf.shape(logits))
         self.job_acts = tf.argmax(logits - tf.log(-tf.log(noise)), 2)
 
+        # ???
         # selected action of stage, a 0-1 vec of shape (batch_size, total_num_stages)
         self.stage_act_vec = tf.placeholder(tf.float32, [None, None])
         # selected action of job, a 0-1 vec of shape (batch_size, total_num_jobs, num_limits)
@@ -138,7 +130,7 @@ class ReinforceAgent(Agent):
         # prob on each job
         self.prob_on_each_job = tf.reshape(
             tf.sparse_tensor_dense_matmul(self.gsn.summ_mats[0], tf.reshape(self.stage_act_probs, [-1, 1])),
-            [tf.reshape(self.stage_act_probs)[0], -1]
+            [tf.shape(self.stage_act_probs)[0], -1]
         )
 
         # job entropy
@@ -188,28 +180,36 @@ class ReinforceAgent(Agent):
     def actor_network(self, stage_inputs, gcn_outputs, job_inputs, gsn_job_summary, gsn_global_summary,
                       stage_valid_mask, job_valid_mask, gsn_summ_backward_map, activate_fn):
         """
-        This is the forwarding computation of the policy network.
-        Called when init.
+        The forwarding computation of the policy network:
+            - Firstly, get the DAG and global summary according to the raw inputs and the outputs of gcn;
+            - Secondly, get the action (next_stage, exec_limit) distribution (softmax as the output layer).
+        This is an implementation of figure. 6.
         """
         batch_size = tf.shape(stage_valid_mask)[0]
 
-        # reshape the raw input into batch format
+        # reshape node inputs to batch format
         stage_inputs_reshape = tf.reshape(stage_inputs, [batch_size, -1, self.stage_input_dim])
+
+        # reshape job inputs to batch format
         job_inputs_reshape = tf.reshape(job_inputs, [batch_size, -1, self.job_input_dim])
+
+        # reshape gcn_outputs to batch format
         gcn_outputs_reshape = tf.reshape(gcn_outputs, [batch_size, -1, self.output_dim])
 
-        gsn_job_summary_reshape = tf.reshape(gsn_job_summary, [batch_size, -1, self.output_dim])
-        gsn_summ_backward_map_extend = tf.tile(tf.expand_dims(gsn_summ_backward_map, axis=0), [batch_size, 1, 1])  # add a dim for batch and copy
-        gsn_job_summ_extend = tf.matmul(gsn_summ_backward_map_extend, gsn_job_summary_reshape)
+        # reshape gsn_job_summary to batch format
+        gsn_job_summ_reshape = tf.reshape(gsn_job_summary, [batch_size, -1, self.output_dim])
+        gsn_summ_backward_map_extend = tf.tile(tf.expand_dims(gsn_summ_backward_map, axis=0), [batch_size, 1, 1])
+        gsn_job_summ_extend = tf.matmul(gsn_summ_backward_map_extend, gsn_job_summ_reshape)
 
-        gsn_global_summary_reshape = tf.reshape(gsn_global_summary, [batch_size, -1, self.output_dim])
-        gsn_global_summary_extend_job = tf.tile(gsn_job_summary_reshape, [1, tf.shape(gsn_job_summary_reshape)[1], 1])
-        gsn_global_summary_extend_stage = tf.tile(gsn_global_summary_reshape, [1, tf.shape(gsn_job_summ_extend)[1], 1])
+        # reshape gsn_global_summary to batch format
+        gsn_global_summ_reshape = tf.reshape(gsn_global_summary, [batch_size, -1, self.output_dim])
+        gsn_global_summ_extend_job = tf.tile(gsn_global_summ_reshape, [1, tf.shape(gsn_job_summ_reshape)[1], 1])
+        gsn_global_summ_extend_stage = tf.tile(gsn_global_summ_reshape, [1, tf.shape(gsn_job_summ_extend)[1], 1])
 
         with tf.variable_scope(self.scope):
             # part 1: the probability distribution over stage selection
             merge_stage = tf.concat(
-                [stage_inputs_reshape, gcn_outputs_reshape, gsn_job_summ_extend, gsn_global_summary_extend_stage],
+                [stage_inputs_reshape, gcn_outputs_reshape, gsn_job_summ_extend, gsn_global_summ_extend_stage],
                 axis=2
             )
             stage_hidden0 = tf_layers.fully_connected(merge_stage, 32, activation_fn=activate_fn)
@@ -224,7 +224,7 @@ class ReinforceAgent(Agent):
 
             # part 2: the probability distribution over executor limits
             merge_job = tf.concat(
-                [job_inputs_reshape, gsn_job_summary_reshape, gsn_global_summary_extend_job],
+                [job_inputs_reshape, gsn_job_summ_reshape, gsn_global_summ_extend_job],
                 axis=2
             )
             expanded_state = expand_act_on_state(merge_job, [lvl / 50. for lvl in self.executor_levels])
@@ -263,7 +263,7 @@ class ReinforceAgent(Agent):
         # get valid masks
         stage_valid_mask, job_valid_mask = self.get_valid_masks(jobs, frontier_stages, src_job, num_src_exec, exec_map, action_map)
         # get summ path which ignores the finished stages
-        summ_mats = ReinforceAgent.get_unfinished_stages_summ_mat(jobs)
+        summ_mats = self.get_unfinished_stages_summ_mat(jobs)
 
         # invoke learning model
         stage_act_probs, job_act_probs, stage_acts, job_acts = self.predict(stage_inputs, job_inputs, stage_valid_mask,
@@ -280,7 +280,7 @@ class ReinforceAgent(Agent):
         This func gives the design of raw (feature) input.
         """
         jobs, src_job, num_src_exec, frontier_stages, exec_limits, exec_commit, moving_executors, action_map = obs
-        total_num_stages = int(sum([job.num_stages for job in jobs]))
+        total_num_stages = int(np.sum(job.num_stages for job in jobs))
 
         # set stage_inputs and job_inputs
         stage_inputs = np.zeros([total_num_stages, self.stage_input_dim])
@@ -355,7 +355,7 @@ class ReinforceAgent(Agent):
                 job_valid_mask[0, base + lvl] = 1
             base += self.executor_levels[-1]
 
-        total_num_stages = int(sum([job.num_stages for job in jobs]))
+        total_num_stages = int(np.sum(job.num_stages for job in jobs))
         stage_valid_mask = np.zeros([1, total_num_stages])
         for stage in frontier_stages:
             if job_valid[stage.job]:
@@ -370,7 +370,7 @@ class ReinforceAgent(Agent):
         Add a connection from the unfinished stages to the summarized node.
         """
         total_num_stages = np.sum([job.num_stages for job in jobs])
-        summ_row_idx, summ_col_idx, summ_data = [[]] * 3
+        summ_row_idx, summ_col_idx, summ_data = [], [], []
         summ_shape = (len(jobs), total_num_stages)
 
         base = 0
@@ -484,195 +484,34 @@ class ReinforceAgent(Agent):
         return self.sess.run(self.sess, save_path)
 
 
-class MsgPassing:
-    def __init__(self):
-        """
-        msg_mat records the parent-children relation in each message passing step.
-        msg_masks is the set of stages (nodes) doing message passing at each step.
-        """
-        self.jobs = utils.OrderedSet()
-        self.msg_mats = []
-        self.msg_masks = []
-        self.job_summ_backward_map = None
-        self.running_job_mat = None
-
-    def get_msg_path(self, jobs):
-        """
-        Check whether the set of jobs changes. If changed, compute the message passing path.
-        """
-        if len(self.jobs) != len(jobs):
-            jobs_changed = True
-        else:
-            jobs_changed = not(all(job_i is job_j for (job_i, job_j) in zip(self.jobs, jobs)))
-
-        if jobs_changed:
-            self.msg_mats, self.msg_masks = MsgPassing.get_msg(jobs)
-            self.job_summ_backward_map = MsgPassing.get_job_summ_backward_map(jobs)
-            self.running_job_mat = self.get_running_job_mat(jobs)
-            self.jobs = utils.OrderedSet(jobs)
-
-        return self.msg_mats, self.msg_masks, self.job_summ_backward_map, self.running_job_mat, jobs_changed
-
-    def reset(self):
-        self.jobs = utils.OrderedSet()
-        self.msg_mats = []
-        self.msg_masks = []
-        self.job_summ_backward_map = None
-        self.running_job_mat = None
-
-    @staticmethod
-    def get_msg(jobs):
-        msg_mats, msg_masks = [], []
-        for job in jobs:
-            msg_mat, msg_mask = MsgPassing.get_bottom_up_paths(job)
-            msg_mats.append(msg_mat)
-            msg_masks.append(msg_mask)
-        if len(jobs) > 0:
-            msg_mats = assist.merge_sparse_mats(msg_mats, args.max_depth)
-            msg_masks = assist.merge_masks(msg_masks)
-        return msg_mats, msg_masks
-
-    @staticmethod
-    def get_job_summ_backward_map(jobs):
-        """
-        Compute backward mapping from stage to job idx.
-        """
-        total_stages_num = int(np.sum([job.num_stages for job in jobs]))
-        job_summ_backward_map = np.zeros([total_stages_num, len(jobs)])
-
-        base = 0
-        job_idx = 0
-        for job in jobs:
-            for stage in job.stages:
-                job_summ_backward_map[base + stage.idx, job_idx] = 1
-            base += job.num_stages
-            job_idx += 1
-        return job_summ_backward_map
-
-    @staticmethod
-    def get_running_job_mat(jobs):
-        running_job_row_idx, running_job_col_idx = [], []
-        running_job_data = []
-        running_job_shape = (1, len(jobs))
-
-        job_idx = 0
-        for job in jobs:
-            if not job.finished:   # get unfinished jobs' summary
-                running_job_row_idx.append(0)
-                running_job_col_idx.append(job_idx)
-                running_job_data.append(1)
-            job_idx += 1
-
-        return tf.SparseTensorValue(
-            indices=np.mat([running_job_row_idx, running_job_col_idx]).transpose(),
-            values=running_job_data,
-            dense_shape=running_job_shape
-        )
-
-    @staticmethod
-    def get_bottom_up_paths(job):
-        """
-        The paths start from all leave stages and end with frontier unfinished stages (stages whose parents are finished).
-        """
-        num_stages = job.num_stages
-        msg_mats = []
-        msg_masks = np.zeros([args.max_depth, num_stages])
-
-        # get frontier stages
-        frontiers = MsgPassing.get_init_frontier(job, args.max_depth)
-        msg_level = {}
-        for s in frontiers:
-            msg_level[s] = 0
-
-        # pass msg
-        for d in range(args.max_depth):
-            new_frontiers = set()
-            parent_visited = set()
-            for s in frontiers:
-                for p in s.parent_stages:
-                    if p not in parent_visited:
-                        cur_level = 0
-                        children_all_in_frontier = True
-                        for c in p.child_stages:
-                            if c not in frontiers:
-                                children_all_in_frontier = False
-                                break
-                            if msg_level[c] > cur_level:
-                                cur_level = msg_level[c]
-                        if children_all_in_frontier:
-                            if p not in msg_level or cur_level + 1 > msg_level[p]:
-                                new_frontiers.add(p)
-                                msg_level[p] = cur_level + 1
-                        parent_visited.add(p)
-            if len(new_frontiers) == 0:
-                break
-            sp_mat = assist.SparseMat(dtype=np.float32, shape=(num_stages, num_stages))
-            for s in new_frontiers:
-                for c in s.child_stages:
-                    sp_mat.add(row=s.idx, col=c.idx, data=1)
-                msg_masks[d, s.idx] = 1
-            msg_mats.append(sp_mat)
-
-            # there might be residual stages that can directly pass msg to its parents (e.g., tpc-h 17, stage 0, 2, 4)
-            # in thi case, it needs twp msg passing steps
-            for s in frontiers:
-                parents_all_in_frontier = True
-                for p in s.parent_stages:
-                    if p not in msg_level:
-                        parents_all_in_frontier = False
-                        break
-                if not parents_all_in_frontier:
-                    new_frontiers.add(s)
-
-            frontiers = new_frontiers
-        for _ in range(d, args.max_depth):   # TODO: replace d with args.max_depth - 1
-            msg_mats.append(assist.SparseMat(dtype=np.float32, shape=(num_stages, num_stages)))
-        return msg_mats, msg_masks
-
-    @staticmethod
-    def get_init_frontier(job, depth):
-        """
-        Get the initial set of frontier nodes.
-        """
-        srcs = set(job.stages)
-        for d in range(depth):
-            new_srcs = set()
-            for s in srcs:
-                if len(s.child_stages) == 0:
-                    new_srcs.add(s)
-                else:
-                    new_srcs.update(s.child_stages)
-            srcs = new_srcs
-        return srcs
-
-
 def expand_act_on_state(state, sub_acts):
     batch_size = tf.shape(state)[0]
     num_stages = tf.shape(state)[1]
-    num_features = state.shape[2].value
+    num_features = state.shape[2].value  # deterministic
     expand_dim = len(sub_acts)
 
     # replicate the state
     state = tf.tile(state, [1, 1, expand_dim])
     state = tf.reshape(state, [batch_size, num_stages * expand_dim, num_features])
 
+    # prepare the appended sub-actions
     sub_acts = tf.constant(sub_acts, dtype=tf.float32)
     sub_acts = tf.reshape(sub_acts, [1, 1, expand_dim])
     sub_acts = tf.tile(sub_acts, [1, 1, num_stages])
     sub_acts = tf.reshape(sub_acts, [1, num_stages * expand_dim, 1])
-    sub_acts = tf.tile(sub_acts, [batch_size, 1, 1])    # now the first two dim of sub_acts are as the same as state's
+    sub_acts = tf.tile(sub_acts, [batch_size, 1, 1])      # now the first two dim of sub_acts are as the same as state's
 
     # concatenate
     concat_state = tf.concat([state, sub_acts], axis=2)   # dim2 = num_features + 1
     return concat_state
 
 
-def leaky_relu(features, alpha=0.3, name=None):
+def leaky_relu(features, alpha=0.2, name=None):
     """
-    Implement the leaky RELU activate function.
+    Implement the leaky ReLU activate function.
     f(x) = x if x > 0 else alpha * x.
     """
-    with ops.name_scope(name, 'LeakyRELU', [features, alpha]):
+    with ops.name_scope(name, 'LeakyReLU', [features, alpha]):
         features = ops.convert_to_tensor(features, name='features')
         alpha = ops.convert_to_tensor(alpha, name='alpha')
         return math_ops.maximum(alpha * features, features)

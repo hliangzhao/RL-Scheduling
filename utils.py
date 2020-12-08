@@ -1,6 +1,5 @@
 """
 Some utilities.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 from collections import OrderedDict
 import sys
@@ -79,12 +78,6 @@ class OrderedSet:
             print('Item not in set!')
             exit(1)
         del self.set[item]
-
-    def to_list(self):
-        """
-        Turn the keys into a list.
-        """
-        return [k for k in self.set]
 
     def update(self, contents):
         for c in contents:
@@ -169,4 +162,4 @@ def create_folder(folder_path):
 
 
 def moving_average(arr_x, N):
-    return np.convolve(arr_x, np.ones(N) / N, mode='valid')
+    return np.convolve(arr_x, np.ones((N,)) / N, mode='valid')

@@ -1,13 +1,9 @@
 """
-This module defines some supplementary classes and funcs for the agent:
-    - sparse matrix and its operations;
-    - tf logger.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
+This module defines the sparse matrices and operations on them.
+We use tf.SparseMat to compress memory usage.
 """
-import tensorflow as tf
 import numpy as np
-from time import gmtime, strftime
-from params import args
+import tensorflow as tf
 
 
 class SparseMat:
@@ -17,7 +13,7 @@ class SparseMat:
     def __init__(self, dtype, shape):
         self.dtype = dtype
         self.shape = shape
-        self.row, self.col, self.data = [[]] * 3
+        self.row, self.col, self.data = [], [], []
 
     def add(self, row, col, data):
         self.row.append(row)
@@ -32,10 +28,6 @@ class SparseMat:
 
     def get_data(self):
         return np.array(self.data)
-
-    def to_tf_sparse_mat(self):
-        indices = np.mat([self.row, self.col]).transpose()
-        return tf.SparseTensorValue(indices=indices, values=self.data, dense_shape=self.shape)
 
 
 def merge_sparse_mats(sparse_mats, depth):
@@ -64,7 +56,7 @@ def merge_sparse_mats(sparse_mats, depth):
     """
     global_sp_mat = []
     for d in range(depth):
-        row_idx, col_idx, data = [[]] * 3
+        row_idx, col_idx, data = [], [], []
         shape = 0
         base = 0
         for mat in sparse_mats:
@@ -106,7 +98,7 @@ def expand_sparse_mats(sparse_mats, exp_step):
     global_sp_mat = []
     depth = len(sparse_mats)
     for d in range(depth):
-        row_idx, col_idx, data = [[]] * 3
+        row_idx, col_idx, data = [], [], []
         shape = 0
         base = 0
         for i in range(exp_step):
@@ -116,6 +108,7 @@ def expand_sparse_mats(sparse_mats, exp_step):
             data.append(sparse_mats[d].values)
             shape += sparse_mats[d].dense_shape[0]
             base += sparse_mats[d].dense_shape[0]
+
         row_idx = np.hstack(row_idx)
         col_idx = np.hstack(col_idx)
         data = np.hstack(data)
@@ -146,7 +139,7 @@ def merge_and_extend_sparse_mats(sparse_mats):
     :return: a transformed global matrix
     """
     batch_size = len(sparse_mats)
-    row_idx, col_idx, data = [[]] * 3
+    row_idx, col_idx, data = [], [], []
     shape = (sparse_mats[0].dense_shape[0] * batch_size, sparse_mats[0].dense_shape[1] * batch_size)
 
     row_base, col_base = 0, 0
@@ -163,52 +156,3 @@ def merge_and_extend_sparse_mats(sparse_mats):
     data = np.hstack(data)
     indices = np.mat([row_idx, col_idx]).transpose()
     return tf.SparseTensorValue(indices, data, shape)
-
-
-def merge_masks(masks):
-    """
-    Merge masks (matrices).
-    e.g.,
-    [0, 1, 0]  [0, 1]  [0, 0, 0, 1]
-    [0, 0, 1]  [1, 0]  [1, 0, 0, 0]
-    [1, 0, 0]  [0, 0]  [0, 1, 1, 0]
-
-    to
-
-    a list of
-    [0, 1, 0, 0, 1, 0, 0, 0, 1]^T,
-    [0, 0, 1, 1, 0, 1, 0, 0, 0]^T,
-    [1, 0, 0, 0, 0, 0, 1, 1, 0]^T,
-    where the depth is 3.
-    """
-    merged_masks = []
-    for d in range(args.max_depth):
-        merged_mask = []
-        for mask in masks:
-            merged_mask.append(mask[d:d+1, :].transpose())
-        if len(merged_mask) > 0:
-            merged_mask = np.vstack(merged_mask)
-        merged_masks.append(merged_mask)
-    return merged_masks
-
-
-class Logger:
-    """
-    The tensorflow logger.
-    """
-    def __init__(self, sess, var_list):
-        self.sess = sess
-        self.summary_vars = []
-        for var in var_list:
-            tf_var = tf.Variable(0.)
-            tf.summary.scalar(var, tf_var)
-            self.summary_vars.append(tf_var)
-        self.summary_ops = tf.summary.merge_all()
-        self.writer = tf.summary.FileWriter(logdir=args.result_folder + strftime("%Y-%m-%d %H:%M:%S", gmtime()))
-
-    def log(self, epoch_idx, values):
-        assert len(self.summary_vars) == len(values)
-        feed_dict = {self.summary_vars[i]: values[i] for i in range(len(values))}
-        summary_str = self.sess.run(self.summary_ops, feed_dict=feed_dict)
-        self.writer.add_summary(summary=summary_str, global_step=epoch_idx)
-        self.writer.flush()

@@ -1,16 +1,15 @@
 """
 This module tests the three algorithms, ReinforceAgent, FIFOAGent, and DynamicAgent.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 import tensorflow as tf
 import matplotlib
 import matplotlib.pyplot as plt
-from algo.learn.tf.reinforce_agent import ReinforceAgent, leaky_relu
+from algo.learn.reinforce_agent import ReinforceAgent, leaky_relu
 from algo.dynamic.dynamic_agent import DynamicAgent
 from algo.fifo.fifo_agent import FIFOAgent
 from params import args
 import utils
-from schedule import Schedule
+from algo.learn.schedule import Schedule
 import visualization
 
 
@@ -65,11 +64,11 @@ def test():
             visualization.show_job_time(
                 schedule.finished_jobs,
                 schedule.executors,
-                save_path=args.result_folder + 'visualization_exp_' + str(exp) + '_scheme_' + scheme + '.png'
+                save_path=args.result_folder + 'visualizations/job_time_exp_' + str(exp) + '_scheme_' + scheme + '.png'
             )
             visualization.show_exec_usage(
                 schedule.finished_jobs,
-                save_path=args.result_folder + 'visualization_exp_' + str(exp) + '_scheme_' + scheme + '.png'
+                save_path=args.result_folder + 'visualizations/exec_usage_exp_' + str(exp) + '_scheme_' + scheme + '.png'
             )
 
         # plot CDF

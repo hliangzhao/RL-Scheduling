@@ -1,6 +1,5 @@
 """
 This module implements the default scheduler implemented in Spark, i.e., FIFO (first come first serve).
-     Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 from algo.agent import Agent
 

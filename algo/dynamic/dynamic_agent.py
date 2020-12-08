@@ -1,11 +1,10 @@
 """
 This module implements the resource dynamic partition scheduler.
-     Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 import numpy as np
 from params import args
 from algo.agent import Agent
-from env import Stage, Job
+from spark_env import Stage, Job
 
 
 class DynamicAgent(Agent):

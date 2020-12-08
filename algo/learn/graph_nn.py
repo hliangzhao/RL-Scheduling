@@ -2,7 +2,6 @@
 This module defines the Graph Neural Network, which is the first part of the agent.
     - GraphCNN is used to get embedding features of all stages.
     - GraphSNN is used to get the job level and global level embedding summarizations.
-    Author: Hailiang Zhao (adapted from https://github.com/hongzimao/decima-sim)
 """
 import tensorflow as tf
 import numpy as np
@@ -22,6 +21,7 @@ class GraphCNN:
         self.activate_fn = activate_fn
         self.scope = scope
 
+        # args.max_depth tensors
         self.adj_mats = [tf.sparse_placeholder(tf.float32, [None, None]) for _ in range(self.max_depth)]
         self.masks = [tf.placeholder(tf.float32, [None, 1]) for _ in range(self.max_depth)]
 
@@ -32,31 +32,43 @@ class GraphCNN:
         # g: e  -->  e
         self.agg_weights, self.agg_bias = init(self.output_dim, self.hidden_dims, self.output_dim, self.scope)
 
-        self.outputs = self.get_embedding()
+        self.outputs = self.forward()
 
-    def get_embedding(self):
+    def forward(self):
         """
-        Embedding features are passing among stages (nodes) of each graph.
-        The info is flowing from sink stages to source stages.
+        Get embedding features of each node for all jobs simultaneously and use masks to filter non-runnable nodes.
         """
+        # message passing among nodes
+        # the information is flowing from leaves to roots
         x = self.inputs
+        # raise x into higher dimension
         for layer in range(len(self.prep_weights)):
-            x = tf.matmul(x, self.prep_weights[layer]) + self.prep_bias[layer]
+            x = tf.matmul(x, self.prep_weights[layer])
+            x += self.prep_bias[layer]
             x = self.activate_fn(x)
 
         for d in range(self.max_depth):
+            # work flow: index_select -> f -> masked assemble via adj_mat -> g
             y = x
+            # process the features on the nodes
             for layer in range(len(self.proc_weights)):
-                y = tf.matmul(y, self.proc_weights[layer]) + self.proc_bias[layer]
+                y = tf.matmul(y, self.proc_weights[layer])
+                y += self.proc_bias[layer]
                 y = self.activate_fn(y)
+
+            # message passing
             y = tf.sparse_tensor_dense_matmul(self.adj_mats[d], y)
 
-            # aggregate children embedding features
+            # aggregate child features
             for layer in range(len(self.agg_weights)):
-                y = tf.matmul(y, self.agg_weights[layer]) + self.agg_bias[layer]
+                y = tf.matmul(y, self.agg_weights[layer])
+                y += self.agg_bias[layer]
                 y = self.activate_fn(y)
-            y *= self.masks[d]
-            x += y
+
+            # remove the artifact from the bias term in g
+            y = y * self.masks[d]
+            # assemble neighboring information
+            x = x + y
         return x
 
 
@@ -81,33 +93,41 @@ class GraphSNN:
         self.job_summ_weights, self.job_summ_bias = init(self.input_dim, self.hidden_dims, self.output_dim, self.scope)
         self.global_summ_weights, self.global_summ_bias = init(self.output_dim, self.hidden_dims, self.output_dim, self.scope)
 
-        self.summaries = self.get_summarize()
+        self.summaries = self.forward()
 
-    def get_summarize(self):
+    def forward(self):
+        """
+        Get the job level and global level summary.
+        """
+        # summarize information in each hierarchy
         x = self.inputs
-        summaries = []
 
+        summaries = []
         # DAG level summary
         s = x
-        for layer in range(len(self.job_summ_weights)):
-            s = tf.matmul(s, self.job_summ_weights[layer]) + self.job_summ_bias[layer]
+        for i in range(len(self.job_summ_weights)):
+            s = tf.matmul(s, self.job_summ_weights[i])
+            s += self.job_summ_bias[i]
             s = self.activate_fn(s)
+
         s = tf.sparse_tensor_dense_matmul(self.summ_mats[0], s)
         summaries.append(s)
 
         # global level summary
-        for layer in range(len(self.global_summ_weights)):
-            s = tf.matmul(s, self.global_summ_weights[layer]) + self.global_summ_bias[layer]
+        for i in range(len(self.global_summ_weights)):
+            s = tf.matmul(s, self.global_summ_weights[i])
+            s += self.global_summ_bias[i]
             s = self.activate_fn(s)
+
         s = tf.sparse_tensor_dense_matmul(self.summ_mats[1], s)
         summaries.append(s)
-
         return summaries
 
 
 def init(input_dim, hidden_dims, output_dim, scope):
     """
     GNN parameter initialization.
+    :return list of weights (tf tensors) and list of biases (tf tensors)
     """
     weights, bias = [], []
     cur_in_dim = input_dim
@@ -134,11 +154,9 @@ def glorot_init(shape, dtype=tf.float32, scope='default'):
         return tf.Variable(tf.random_uniform(shape, minval=-init_range, maxval=init_range, dtype=dtype))
 
 
-def ones(shape, dtype=tf.float32, scope='default'):
-    with tf.variable_scope(scope):
-        return tf.Variable(tf.ones(shape, dtype=dtype))
-
-
 def zeros(shape, dtype=tf.float32, scope='default'):
+    """
+    Used to init bias.
+    """
     with tf.variable_scope(scope):
         return tf.Variable(tf.zeros(shape, dtype=dtype))

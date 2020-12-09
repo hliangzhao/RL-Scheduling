@@ -12,9 +12,7 @@ from job_generator import generate_jobs
 from spark_env.task import Task
 from spark_env.job import Job
 import utils
-
-
-# TODO: args.moving_delay can be replaced to introduce heterogenous communication overhead
+# args.moving_delay can be replaced to introduce heterogenous communication overhead
 
 
 class Schedule:
@@ -39,10 +37,10 @@ class Schedule:
 
         self.exec_to_schedule = None                   # executors to be scheduled
         self.src_job = None
-        self.num_src_exec = -1
+        self.num_src_exec = -1                         # number of execs to be scheduled
         self.jobs = None
-        self.action_map = None
-        self.finished_jobs = None
+        self.action_map = None                         # a ReversibleMap from act to stage
+        self.finished_jobs = None                      # we track this for updating the action-to-stage map
         self.max_time = None
 
     def step(self, next_stage, limit):
@@ -71,8 +69,11 @@ class Schedule:
             # which have been decided to be dispatched to next_stage
             # at last, do not forget we limit the maximum exec_num (this is one of the actions what the actor_network returns)
             # thus, use_exec is the num of need-to-add execs
-            use_exec = min(next_stage.num_tasks - next_stage.next_task_idx - self.exec_commit.stage_commit[next_stage] -
-                           self.moving_executors.count(next_stage), limit)
+            use_exec = min(
+                (next_stage.num_tasks - next_stage.next_task_idx) -
+                (self.exec_commit.stage_commit[next_stage] + self.moving_executors.count(next_stage)),
+                limit
+            )
         else:
             # if next_stage is none, just get the maximum exec_num we can use
             use_exec = limit
@@ -87,7 +88,9 @@ class Schedule:
         if self.num_src_exec == 0:
             # no more schedulable execs, which starts a new scheduling round
             self.stage_selected.clear()     # the left selected stages cannot be scheduled any more, start all over again
-            self.schedule()                 # all commitment all made, schedule these executors
+            # all commitment all made, schedule these executors. Actually here is the real line we actually do scheduling events
+            # in one step, we will do many scheduling events until no more runnable stages or no more free executors
+            self.schedule()
 
         # now schedule has been made, update state. The new state will be send to scheduling algorithm to invoke next action
         while len(self.timeline) > 0 and self.num_src_exec == 0:
@@ -113,7 +116,7 @@ class Schedule:
                     frontier_changed = stage.job.update_frontier_stages(stage)
 
                 # free up this executor
-                self.assign_executor(finished_task.executor, frontier_changed)
+                self.redispatch_executor(finished_task.executor, frontier_changed)
 
                 if stage.job.num_finished_stages == stage.job.num_stages:
                     # update job completion status
@@ -124,7 +127,7 @@ class Schedule:
 
             elif isinstance(item, Job):
                 # ============= new job arrives event =============
-                # update jobs num, and action to stage map. Besides, dispatch all free execs in global free pool to it
+                # update jobs num, and the action-to-stage map. Besides, dispatch all free execs in global free pool to it
                 job = item
                 assert not job.arrived
                 job.arrived = True
@@ -177,14 +180,15 @@ class Schedule:
         # these return vars are the input of the scheduling algorithm
         return self.observe(), reward, done
 
-    def assign_executor(self, executor, frontier_changed):
+    def redispatch_executor(self, executor, frontier_changed):
         """
-        Dispatch a finished task's 'executor' to other stages.
+        Dispatch a finished task's 'executor' to the other stages.
         """
         if executor.stage is not None and not executor.stage.no_more_task:
-            # the stage which this executor is working on is not finished, just directly working on the next task!
+            # the stage which this executor previously worked on is not finished, just directly working on the next task!
             # This is wired because every scheduling event should be decided by the agent. However, considering the
-            # principle of locality, do it like this can improve the efficiency and avoid invoking the agent too many times.
+            # principle of locality, do it like this can not only improve the efficiency, but also avoid invoking the
+            # agent too many times
             task = executor.stage.schedule(executor)
             self.timeline.push(task.finish_time, task)
             return
@@ -211,7 +215,7 @@ class Schedule:
                 self.schedule()                       # just directly schedule 'executor', thus {} is enough, no need to use OrderedSet()
             else:
                 # consult all executors on this stage
-                # len(self.exec_to_schedule) != self.num_source_exec can happen
+                # len(self.exec_to_schedule) != self.num_src_exec can happen
                 self.src_job = executor.job
                 self.num_src_exec = len(executor.stage.executors)
 
@@ -308,14 +312,15 @@ class Schedule:
 
     def saturated(self, stage):
         """
-        A stage is saturated iff it is finished as plan, which means we don;t need to schedule any execs to this stage any more.
+        A stage is saturated iff it is finished as plan, which means we dont need to schedule any execs to this stage any more.
         """
         expected_task_idx = stage.next_task_idx + self.exec_commit.stage_commit[stage] + self.moving_executors.count(stage)
         return expected_task_idx >= stage.num_tasks
 
     def get_frontier_stages(self):
         """
-        Get all the frontier stages.
+        Get all the frontier stages from all currently not finished jobs.
+        Distinguish this from each job's job.frontier_stages. This is mainly (only) used for observation.
         In this class, 'frontier' can be interpreted as itself is unsaturated but all its parent stages are saturated.
         """
         frontier_stages = utils.OrderedSet()
@@ -331,9 +336,9 @@ class Schedule:
                         frontier_stages.add(stage)
         return frontier_stages
 
-    def get_exec_limits(self):
+    def get_binding_execs_num(self):
         """
-        Get currently the num of bound execs to each job.
+        Get currently the num of binding execs to each job.
         """
         exec_lmt = {}              # {job: int}
         for job in self.jobs:
@@ -350,11 +355,11 @@ class Schedule:
         feature matrix of this observation (state) and output a proper action.
         """
         return self.jobs, self.src_job, self.num_src_exec, self.get_frontier_stages(), \
-            self.get_exec_limits(), self.exec_commit, self.moving_executors, self.action_map
+            self.get_binding_execs_num(), self.exec_commit, self.moving_executors, self.action_map
 
     def remove_job(self, job):
         """
-        Remove the job when it is finished.
+        Remove the job when it is finished. Only called when the job is finished.
         """
         for executor in list(job.executors):
             executor.detach_job()
@@ -427,7 +432,7 @@ class Timeline:
 class RewardCalculator:
     """
     Use the execution time for now to calculate the reward.
-    For every job still in system, reward will add the negative of the job's executing time till now.
+    For every job still in system, reward will add the negative of the job's executing time till now (of course with scaled factor).
     Obviously, longer each job's execution time, more punishment the Agent receives.
     """
     def __init__(self):
@@ -463,7 +468,7 @@ class ExecutorCommit:
     self.commit is a dict, where each key-value pair is {stage/job: OrderedDict(stage: amount)}.
     The key is the previously served stage/job of the first exec in self.exec_to_schedule, the value is
     an ordered dict where
-        - the key is the next to be scheduled stage, and
+        - the key is the next to-be-scheduled stage, and
         - the value is the num of executors allocated to it.
     """
     def __init__(self):
@@ -540,6 +545,6 @@ def get_act2stage(jobs):
     act = 0
     for job in jobs:
         for stage in job.stages:
-            act2stage[act] = stage
+            act2stage[act] = stage     # because of the __setitem__ function
             act += 1
     return act2stage

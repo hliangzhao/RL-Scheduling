@@ -21,21 +21,21 @@ class Stage:
             The dict looks like
                 {
                     'fresh_durations': {
-                        e_1: [fresh durations (with warmup delay included) of a single task of this stage
+                        e_1: [fresh duration of each task (with warmup delay included) of this stage
                               when e_1 executors are allocated to this stage],
                         e_2: [...],
                         ...
                         e_N: [...]
                     },
                     'first_wave': {
-                        e_1: [first wave durations of a single task of this stage when e_1 executors are
+                        e_1: [first wave duration of each task of this stage when e_1 executors are
                               allocated to this stage],
                         e_2: [...],
                         ...
                         e_N: [...]
                     },
                     'rest_wave': {
-                        e_1: [rest wave durations of a single task of this stage when e_1 executors are
+                        e_1: [rest wave duration of each task of this stage when e_1 executors are
                               allocated to this stage],
                         e_2: [...],
                         ...
@@ -43,12 +43,16 @@ class Stage:
                     }
                 }
             Here e_1, ..., e_N are 2, 5, 10, 80, 100, respectively.
+
             The authors only collect the task execution time under the number of e_i executors.
             In data/tpch-queries/task_durations/*.pdf, the data points records the durations collected.
                 - the green data points mean the 'fresh_durations';
                 - the red data points mean the 'first_wave';
                 - the blue data points mean the 'rest_wave'.
-            The sum of the 'first_wave' and 'rest_wave' data points num is the number of tasks in this stage.
+                Let us take tpch-2g-1-0.pdf as an example. This is the first stage of the job and only has 12 tasks.
+                It is impossible to have the 'first_wave' data points because it is the entry node.
+                Let us also take tpch-2g-1-4.pdf as an example. This is the last stage of the job and has 5 tasks.
+                When only small num of executors, it is almost impossible to have the 'fresh_wave' data points.
         :param wall_time: records current time
         :param np_random: isolated random generator
         """
@@ -70,11 +74,13 @@ class Stage:
         self.executors = utils.OrderedSet()      # executors which marked as running in this stage
 
         # these vars are initialized when the corresponding job is initialized
-        self.parent_stages, self.child_stages, self.descendant_stages = [], [], []
+        # self.parent_stages, self.child_stages, self.descendant_stages = [], [], []
+        self.parent_stages, self.child_stages = [], []
         self.job = None
 
     def get_duration(self):
         """
+        ====================== not used ======================
         This function calculates the total remaining execution time for finishing this stage.
         Note that what we calculated is the pure 'execution' time!
         """
@@ -103,9 +109,9 @@ class Stage:
 
     def sample_executor_key(self, num_executors):
         """
-        Note that the authors only collect the task durations under 2, 5, ..., 80, 100 executors on one stage.
-        However, the executors on one stage could be any integer <= args.num_exec.
-        Thus, to use the collected data, we need to map the real executors num to one of [2, 5, ..., 80, 100] (args.executor_data_point).
+        Note that the authors only collect the task execution durations of each stage under 2, 5, ..., 80, 100 executors on the corresponding job.
+        However, the executors on one job could be any integer <= args.num_exec.
+        Thus, to use the collected data, we need to map the real executors num to one of [5, ..., 80, 100] (args.executor_data_point).
         The map follows the principle of proximity.
         :param num_executors: real executors num which bound to this stage
         :return: a number in args.executor_data_point
@@ -135,8 +141,8 @@ class Stage:
     def schedule(self, executor):
         """
         Allocate an executor to the exactly wait-for-scheduling task of this stage.
-        To faithfully simulate the actual scenario, the execution time of a task on the same executor could be different.
-        We record the execution time under three circumstances (saved in dataset):
+        Note that the execution time of a same task could be different because the real-world scenarios are complicate.
+        To faithfully simulate the actual scenario, we record the execution time under three circumstances (saved in dataset):
             - it is the first time the executor runs on the job (of this stage) ---> 'fresh_duration' (context switch delay counts);
             - the executor has run on the previous stages of the job (of this stage) but is fresh to this stage ---> 'first_wave';
             - the executor has run on this stage beforehand but is fresh to the wait-for-scheduling task ---> 'rest_wave'.
@@ -144,7 +150,7 @@ class Stage:
         """
         assert self.next_task_idx < self.num_tasks
         task = self.tasks[self.next_task_idx]
-        num_executors = len(self.job.executors)
+        num_executors = len(self.job.executors)       # executors currently running on self.job
         assert num_executors > 0
 
         # get the duration of the wait-for-scheduling task when executing on this executor
@@ -182,12 +188,12 @@ class Stage:
                 fresh_durations = self.task_duration['fresh_durations'][executor_key]
                 duration = fresh_durations[np.random.randint(len(fresh_durations))]
 
-        # detach the old stage from this executor (not that this executor is local to the job of this stage)
+        # detach the old stage from this executor (note that this executor is local to the job of this stage)
         executor.detach_stage()
 
         # schedule this task
         task.schedule(self.wall_time.cur_time, duration, executor)
-        self.executors.add(executor)    # the add() operation is interpreted as: mark this exec as running in this stage
+        self.executors.add(executor)    # the add() operation is interpreted as: mark this exec as running on this stage
         executor.stage = self
 
         # update stage info, if finished, remove itself from the set of frontier stages

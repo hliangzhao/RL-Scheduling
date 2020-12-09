@@ -69,7 +69,7 @@ def train_master():
 
     # start training
     for ep in range(1, args.num_epochs):
-        print('training epoch', ep)
+        print('==== training epoch', ep, '====')
         # synchronize master's params to each worker agent
         master_params = master_agent.get_params()
         # generate max time stochastically based on the reset prob
@@ -105,7 +105,7 @@ def train_master():
             avg_reward_calculator.add_list_filter_zero(batch_reward, diff_time)
 
         t2 = time.time()
-        print('Got reward from workers in', t2 - t1, 'secs')
+        print('Got reward from %d workers in %f secs' % (args.num_worker_agents, t2 - t1))
 
         if any_agent_panic:
             # the try condition in train_worker() breaks, and throw out this rollout
@@ -158,7 +158,7 @@ def train_master():
         master_agent.apply_gradients(aggregate_gradients(master_gradient), args.lr)
 
         t5 = time.time()
-        print('Updated master\'s gradient in', t5 - t4, 'secs')
+        print('Updated master\'s gradient in', t5 - t4, 'secs\n')
 
         # logging
         tf_logger.log(

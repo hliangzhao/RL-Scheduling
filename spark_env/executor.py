@@ -78,13 +78,13 @@ class FreeExecutors:
             # the exec is available to every job
             executor.detach_job()
         else:
-            # the exec is available to this job, detach the odl stage it bound to
+            # the exec is available to this job, detach the old stage it bound to
             executor.detach_stage()
         self.free_executors[job].add(executor)
 
     def remove(self, executor):
         """
-        Remove the executor from its bound job.
+        Remove the given executor from its bound job.
         """
         self.free_executors[executor.job].remove(executor)
 
@@ -93,7 +93,7 @@ class FreeExecutors:
 
     def remove_job(self, job):
         """
-        Retrieve the given job's executors and put them back to the free executor pool.
+        Release the given job's executors and put them back to the free executor pool.
         """
         for executor in self.free_executors[job]:
             executor.detach_job()
@@ -113,7 +113,7 @@ class MovingExecutors:
     """
     def __init__(self):
         """
-        self.moving_executors: which stage this executor is going to be moved to
+        self.moving_executors: which job's which stage this executor is going to be moved to
         self.stage_track: if the executor is going to be moved to the stage, record it
         """
         self.moving_executors = {}     # {executor: stage}
@@ -147,6 +147,10 @@ class MovingExecutors:
         return stage
 
     def count(self, stage):
+        """
+        Get the num fo executors waiting to be scheduled to the given stage.
+        This var is used to calculate how many new execs to be dispatched to it.
+        """
         return len(self.stage_track[stage])
 
     def add_job(self, job):

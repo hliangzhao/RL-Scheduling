@@ -47,6 +47,7 @@ class Task:
 
     def get_duration(self):
         """
+        ====================== not used ======================
         Get the remaining execution time for finishing this task.
         Note that what it calculated is the pure 'execution' time!
         """

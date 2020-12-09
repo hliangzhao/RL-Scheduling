@@ -1,5 +1,5 @@
 """
-This module defines the wall-clock time, which is used to measure the runtime from beginning to now.
+This module defines the wall-clock time, which is used to measure the running time from beginning to now.
 """
 
 

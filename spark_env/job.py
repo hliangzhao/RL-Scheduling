@@ -14,7 +14,7 @@ class Job:
     virtual stage with zero computation cost.
     """
     def __init__(self, stages, adj_mat, name):
-        assert len(stages) == adj_mat.shape[0] == adj_mat.shape[1]
+        # assert len(stages) == adj_mat.shape[0] == adj_mat.shape[1]
         self.name = name
         self.stages = stages
         self.adj_mat = adj_mat
@@ -22,7 +22,8 @@ class Job:
         self.num_finished_stages = 0
 
         self.executors = utils.OrderedSet()
-        assert self.is_dag(self.num_stages, self.adj_mat)
+        # comment out the following for time saving
+        # assert self.is_dag(self.num_stages, self.adj_mat)
 
         self.frontier_stages = utils.OrderedSet()
         for stage in self.stages:
@@ -94,6 +95,7 @@ class Job:
 
     def get_duration(self):
         """
+        ====================== not used ======================
         Get the total remaining execution time of this job.
         """
         return sum([stage.get_duration() for stage in self.stages])
@@ -102,8 +104,8 @@ class Job:
         for stage in self.stages:
             stage.reset()
         self.num_finished_stages = 0
-        self.executors = utils.OrderedSet()
-        self.frontier_stages = utils.OrderedSet()
+        self.executors.clear()
+        self.frontier_stages.clear()
         for stage in self.stages:
             if stage.is_runnable():
                 self.frontier_stages.add(stage)
@@ -114,9 +116,9 @@ class Job:
     def update_frontier_stages(self, stage):
         changed = False
         for child in stage.child_stages:
-            # TODO [bug]: what self.frontier_stages stores is child stages, not their idx!
+            # [bug]: what self.frontier_stages stores is child stages, not their idx!
             if child.is_runnable():
-                if child not in self.frontier_stages:
+                if child.idx not in self.frontier_stages:
                     self.frontier_stages.add(child)
                     changed = True
         return changed

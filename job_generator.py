@@ -15,22 +15,23 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
     """
     New a TPC-H query job instance.
     """
-    assert args.query_type == 'tpch'
+    # assert args.query_type == 'tpch'
     query_path = os.path.dirname(__file__) + dataset_path + query_size + '/'
     adj_mat = np.load(query_path + 'adj_mat_' + str(query_idx) + '.npy', allow_pickle=True)
     task_durations = np.load(query_path + 'task_duration_' + str(query_idx) + '.npy', allow_pickle=True).item()
     # assert adj_mat.shape[0] == adj_mat.shape[1] == len(task_durations)
 
+    # TODO: check the shape of task_durations
     num_stages = adj_mat.shape[0]
     stages = []
     # new each stage instance
     for s in range(num_stages):
         task_duration = task_durations[s]
-        e = next(iter(task_duration['first_wave']))
+        e = next(iter(task_duration['first_wave']))        # actually e == 2
         num_tasks = len(task_duration['first_wave'][e]) + len(task_duration['rest_wave'][e])
 
         # remove warmup delay from first wave duration
-        # a dict has the same shape with task_duration['first_wave'], it is used to replace the original first_wave
+        # cleaned_first_wave is a dict has the same shape with task_duration['first_wave'], it is used to replace the original first_wave
         # i.e., {e_1: [list of durations], e_2: [list of durations], ..., e_N: [list of durations]}
         cleaned_first_wave = dict()
         for e in task_duration['first_wave']:
@@ -45,8 +46,9 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
                     fresh_durations.remove(d)
 
         # if cleaned_first_wave[e] is empty, we can fill it with the nearest neighbour's first wave records
-        # however, we can find that this remedy is flawed because the cleaned_first_wave with the smallest executor key can still be empty!
-        # that's why the authors' default param for args.executor_data_point is [5, 10, 20, 40, 50, 60, 80, 100], where the '2' is non-exist!
+        # however, we can find that this remedy is flawed because the cleaned_first_wave with the smallest executor key can still be empty
+        # because last_first_wave is initialized as empty! That's why the authors' default param for args.executor_data_point is
+        # [5, 10, 20, 40, 50, 60, 80, 100], where the '2' is non-exist!
         last_first_wave = []
         for e in sorted(cleaned_first_wave.keys()):
             if len(cleaned_first_wave[e]) == 0:
@@ -55,6 +57,7 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
         task_duration['first_wave'] = cleaned_first_wave
 
         # get the estimate of duration for each task of this stage
+        # the init is too complicated, it looks like unnecessary because we still need to recalculate the duration of each task when scheduling (stage.schedule)
         rough_duration = np.mean(
             [d for fwd in task_duration['first_wave'].values() for d in fwd] +      # '+' is equal to .extend
             [d for rwd in task_duration['rest_wave'].values() for d in rwd] +
@@ -66,6 +69,7 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
         for t in range(num_tasks):
             # the tasks in the same stage share the execution duration
             task = Task(idx=t, rough_duration=rough_duration, wall_time=wall_time)
+            # task = Task(idx=t, rough_duration=0, wall_time=wall_time)
             tasks.append(task)
         stage = Stage(idx=s, tasks=tasks, task_duration=task_duration, wall_time=wall_time, np_random=np_random)
         stages.append(stage)
@@ -77,29 +81,30 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
                 stages[p].child_stages.append(stages[c])
                 stages[c].parent_stages.append(stages[p])
     # setup descendant node info
-    for stage in stages:
-        if len(stage.parent_stages) == 0:
-            stage.descendant_stages = get_descendants(stage)
+    # for stage in stages:
+    #     if len(stage.parent_stages) == 0:
+    #         stage.descendant_stages = get_descendants(stage)
 
     # finally, new the job instance
     return Job(stages=stages, adj_mat=adj_mat, name=args.query_type + '-' + query_size + '-' + str(query_idx))
 
 
-def get_descendants(stage):
-    """
-    Recursively get the descendants of given stage.
-    This func is called when generating a job instance.
-    """
-    if len(stage.descendant_stages) > 0:
-        return stage.descendant_stages
-    stage.descendant_stages = [stage]
-    for child_stage in stage.child_stages:
-        child_descendants = get_descendants(child_stage)
-        for cd in child_descendants:
-            # avoid repeat
-            if cd not in stage.descendant_stages:
-                stage.descendant_stages.append(cd)
-    return stage.descendant_stages
+# =========== used for critical path scheduling, not used for training, thus I comment out it ===========
+# def get_descendants(stage):
+#     """
+#     Recursively get the descendants of given stage.
+#     This func is called when generating a job instance.
+#     """
+#     if len(stage.descendant_stages) > 0:
+#         return stage.descendant_stages
+#     stage.descendant_stages = [stage]
+#     for child_stage in stage.child_stages:
+#         child_descendants = get_descendants(child_stage)
+#         for cd in child_descendants:
+#             # avoid repeat
+#             if cd not in stage.descendant_stages:
+#                 stage.descendant_stages.append(cd)
+#     return stage.descendant_stages
 
 
 def generate_tpch_jobs(np_random, timeline, wall_time):
@@ -157,18 +162,18 @@ def generate_jobs(np_random, timeline, wall_time):
         exit(1)
 
 
-def get_stages_order(stage, stages_order):
-    """
-    ========= This func will be used afterwards, it's useless now =========
-    Use DFS to get the topological order of stages for a given job (DAG).
-    """
-    parent_idx = []
-    parent_map = {}      # {stage_idx: stage}
-    for s in stage.parent_stages:
-        parent_idx.append(s.idx)
-        parent_map[s.idx] = s
-    parent_idx.sort()
-    for idx in parent_idx:
-        get_stages_order(parent_map[idx], stages_order)
-    if stage.idx not in stages_order:
-        stages_order.append(stage.idx)
+# ========= This func will be used afterwards, it's useless now =========
+# def get_stages_order(stage, stages_order):
+#     """
+#     Use DFS to get the topological order of stages for a given job (DAG).
+#     """
+#     parent_idx = []
+#     parent_map = {}      # {stage_idx: stage}
+#     for s in stage.parent_stages:
+#         parent_idx.append(s.idx)
+#         parent_map[s.idx] = s
+#     parent_idx.sort()
+#     for idx in parent_idx:
+#         get_stages_order(parent_map[idx], stages_order)
+#     if stage.idx not in stages_order:
+#         stages_order.append(stage.idx)

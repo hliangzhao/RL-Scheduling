@@ -2,7 +2,7 @@
 This module defines the object to be scheduled, i.e. job.
 """
 import numpy as np
-import networkx as nx
+# import networkx as nx
 import utils
 from params import args
 
@@ -22,7 +22,6 @@ class Job:
         self.num_finished_stages = 0
 
         self.executors = utils.OrderedSet()
-        # comment out the following for time saving
         # assert self.is_dag(self.num_stages, self.adj_mat)
 
         self.frontier_stages = utils.OrderedSet()
@@ -30,16 +29,14 @@ class Job:
             if stage.is_runnable():
                 self.frontier_stages.add(stage)
 
-        # assign this job to its stages
         for stage in self.stages:
             stage.job = self
 
         self.arrived = False
         self.finished = False
-        self.start_time = None            # job.start_time is the arrival time of this job
+        self.start_time = None         # job.start_time is the arrival time of this job, different from task.start_time
         self.finish_time = np.inf
 
-        # map an executor to an interval
         self.executor2interval = self.get_executor_interval_map()
 
     @staticmethod
@@ -118,20 +115,20 @@ class Job:
         for child in stage.child_stages:
             # [bug]: what self.frontier_stages stores is child stages, not their idx!
             if child.is_runnable():
-                if child.idx not in self.frontier_stages:
+                if child not in self.frontier_stages:
                     self.frontier_stages.add(child)
                     changed = True
         return changed
 
-    @staticmethod
-    def is_dag(num_stages, adj_mat):
-        """
-        Judge a job (represented by adj_mat) is a DAG or not.
-        """
-        graph = nx.DiGraph()
-        graph.add_nodes_from(range(num_stages))
-        for i in range(num_stages):
-            for j in range(num_stages):
-                if adj_mat[i, j] == 1:
-                    graph.add_edge(i, j)
-        return nx.is_directed_acyclic_graph(graph)
+    # @staticmethod
+    # def is_dag(num_stages, adj_mat):
+    #     """
+    #     Judge a job (represented by adj_mat) is a DAG or not.
+    #     """
+    #     graph = nx.DiGraph()
+    #     graph.add_nodes_from(range(num_stages))
+    #     for i in range(num_stages):
+    #         for j in range(num_stages):
+    #             if adj_mat[i, j] == 1:
+    #                 graph.add_edge(i, j)
+    #     return nx.is_directed_acyclic_graph(graph)

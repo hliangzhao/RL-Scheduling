@@ -18,64 +18,56 @@ from algo.learn.msg_passing import MsgPassing
 
 
 class ReinforceAgent(Agent):
-    def __init__(self, sess, stage_input_dim, job_input_dim, hidden_dims, output_dim, max_depth, executor_levels, activate_fn, eps,
-                 optimizer=tf.train.AdamOptimizer, scope='reinforce_agent'):
-        """
-        Initialization the agent. In this init, we define the basic parameters such as stage and job raw feature dim.
-        We also define the computation graph for tf vars.
-        """
+    def __init__(self, sess, stage_input_dim, job_input_dim, hidden_dims, output_dim, max_depth, executor_levels,
+                 activate_fn, eps, optimizer=tf.train.AdamOptimizer, scope='reinforce_agent'):
         super(ReinforceAgent, self).__init__()
+        # ================ 1. basic properties ================
         self.sess = sess
         self.stage_input_dim = stage_input_dim
         self.job_input_dim = job_input_dim
         self.hidden_dims = hidden_dims
         self.output_dim = output_dim
-        self.executor_levels = executor_levels
         self.max_depth = max_depth
+        self.executor_levels = executor_levels
         self.activate_fn = activate_fn
         self.eps = eps
         self.optimizer = optimizer
         self.scope = scope
 
+        # ================ 2. msg passing, GNNs (the left side of the reinforce agent), and validation masks ================
         self.msg_passing = MsgPassing()
-        # dim 0 = total_num_stages or batch_size?
-        self.stage_inputs = tf.placeholder(tf.float32, [None, self.stage_input_dim])           # raw input feature for stages
-        # dim 0 = total_num_jobs or batch_size?
-        self.job_inputs = tf.placeholder(tf.float32, [None, self.job_input_dim])               # raw input feature for jobs
+        self.stage_inputs = tf.placeholder(tf.float32, [None, self.stage_input_dim])  # dim 0 = total_num_stages or batch_size?
+        self.job_inputs = tf.placeholder(tf.float32, [None, self.job_input_dim])      # dim 0 = total_num_jobs or batch_size?
+
         self.gcn = graph_nn.GraphCNN(
             self.stage_inputs, self.stage_input_dim, self.hidden_dims, self.output_dim,
             self.max_depth, self.activate_fn, self.scope
         )
         self.gsn = graph_nn.GraphSNN(
-            # x_v^i and e_v^i are inputs of DAG summary
-            tf.concat([self.stage_inputs, self.gcn.outputs], axis=1),
-            # dim(x_v^i) + dim(e_v^i)
-            self.stage_input_dim + self.output_dim,
+            tf.concat([self.stage_inputs, self.gcn.outputs], axis=1),      # x_v^i and e_v^i are inputs of DAG summary
+            self.stage_input_dim + self.output_dim,                        # dim(x_v^i) + dim(e_v^i)
             self.hidden_dims, self.output_dim, self.activate_fn, self.scope
         )
-        # valid mask for stage action, of shape (batch_size, total_num_stages)
-        self.stage_valid_mask = tf.placeholder(tf.float32, [None, None])                       # raw input to indicate stage validation
-        # valid mask for executor limit on jobs, of shape (batch_size, num_jobs * num_exec_limits)
-        self.job_valid_mask = tf.placeholder(tf.float32, [None, None])                         # raw input to indicate job validation
-        # map back the job summarization to each stage, of shape (total_num_stages, num_jobs)
-        self.job_summ_backward_map = tf.placeholder(tf.float32, [None, None])                  # raw input to indicate the job which each stage belongs to
 
-        # ======= the following part defines the forwarding computation graph =======
-        # map gcn outputs and raw_inputs to action probability distribution
-        # stage_act_probs: of shape (batch_size, total_num_stages)
-        # job_act_probs: of shape (batch_size, total_num_jobs, num_limits)
-        self.stage_act_probs, self.job_act_probs = self.actor_network(
-            self.stage_inputs, self.gcn.outputs, self.job_inputs,
-            self.gsn.summaries[0], self.gsn.summaries[1],
-            self.stage_valid_mask, self.job_valid_mask,
-            self.job_summ_backward_map, self.activate_fn
+        self.stage_valid_mask = tf.placeholder(tf.float32, [None, None])        # (batch_size, total_num_stages)
+        self.job_valid_mask = tf.placeholder(tf.float32, [None, None])          # (batch_size, num_jobs * num_exec_limits)
+        self.job_summ_backward_map = tf.placeholder(tf.float32, [None, None])   # (total_num_stages, num_jobs)
+
+        # the following two vars are input from current state to indicate whether the stage is runnable and the exec_limit is legal
+        self.stage_act_vec = tf.placeholder(tf.float32, [None, None])           # (batch_size, total_num_stages)
+        self.job_act_vec = tf.placeholder(tf.float32, [None, None, None])       # (batch_size, total_num_jobs, num_limits)
+
+        # ================ 3. claim problem-specific operations (to get the loss) ===========
+        # self.stage_act_probs (batch_size, total_num_stages): the prob. distribution of next stage
+        # self.job_act_probs (batch_size, total_num_jobs, num_limits): the prob. distribution of exec_limit for each job
+        self.stage_act_probs, self.job_act_probs = self.policy_network(
+            self.stage_inputs, self.gcn.outputs, self.job_inputs, self.gsn.summaries[0], self.gsn.summaries[1],
+            self.stage_valid_mask, self.job_valid_mask, self.job_summ_backward_map, self.activate_fn
         )
 
-        # get next stage
-        # stage_acts is of shape (batch_size, 1)
+        # the chosen next stage, of shape (batch_size, 1)
         logits = tf.log(self.stage_act_probs)
-        # why add noise? It's a trick learned from OpenAI's implementation
-        # below is explanations:
+        # why add noise? It's a trick learned from OpenAI's implementation, below is the explanation:
         # note that the vanilla use of the policy gradient family (e.g., A2C) is on-policy (has to use data sampled from the current policy).
         # Epsilon-greedy creates a bias in the data (because sometimes the action is sampled from random, not just from the current policy).
         # You will need a correction, such as importance sampling, to make the training data unbiased for policy gradient.
@@ -84,25 +76,19 @@ class ReinforceAgent(Agent):
         noise = tf.random_uniform(tf.shape(logits))
         self.stage_acts = tf.argmax(logits - tf.log(-tf.log(noise)), 1)
 
-        # get executor limit of each job
-        # job_acts is of shape (batch_size, total_num_jobs, 1)
+        # the exec_limit of each job, of shape (batch_size, total_num_jobs, 1)
         logits = tf.log(self.job_act_probs)
         noise = tf.random_uniform(tf.shape(logits))
         self.job_acts = tf.argmax(logits - tf.log(-tf.log(noise)), 2)
 
-        # ???
-        # selected action of stage, a 0-1 vec of shape (batch_size, total_num_stages)
-        self.stage_act_vec = tf.placeholder(tf.float32, [None, None])
-        # selected action of job, a 0-1 vec of shape (batch_size, total_num_jobs, num_limits)
-        self.job_act_vec = tf.placeholder(tf.float32, [None, None, None])
-
-        # stage selected action probability
+        # stage selected action probability, of shape (batch_size, 1)
         self.selected_stage_prob = tf.reduce_sum(
             tf.multiply(self.stage_act_probs, self.stage_act_vec),
             reduction_indices=1,
             keep_dims=True
         )
-        # job selected action probability
+
+        # job selected action probability, of shape (batch_size, total_num_jobs)
         self.selected_job_prob = tf.reduce_sum(
             tf.reduce_sum(tf.multiply(self.job_act_probs, self.job_act_vec), reduction_indices=2),
             reduction_indices=1,
@@ -111,9 +97,6 @@ class ReinforceAgent(Agent):
 
         # advantage term from Monte Carlo or critic, of shape (batch_size, 1)
         self.adv = tf.placeholder(tf.float32, [None, 1])
-
-        # use entropy to promote exploration (decay over tm)
-        self.entropy_weight = tf.placeholder(tf.float32, ())
 
         # actor loss
         self.adv_loss = tf.reduce_sum(tf.multiply(
@@ -139,69 +122,61 @@ class ReinforceAgent(Agent):
             tf.reduce_sum(tf.multiply(self.job_act_probs, tf.log(self.job_act_probs + self.eps)), reduction_indices=2)
         ))
 
-        # entropy loss
+        # normalized entropy loss over batch size
         self.entropy_loss = self.stage_entropy + self.job_entropy
-        # normalize entropy over batch size
         self.entropy_loss /= tf.log(tf.cast(tf.shape(self.stage_act_probs)[1], tf.float32)) + tf.log(float(len(self.executor_levels)))
+
+        # use entropy to promote exploration (decay over time)
+        self.entropy_weight = tf.placeholder(tf.float32, ())
 
         # total loss
         self.total_loss = self.adv_loss + self.entropy_weight * self.entropy_loss
 
-        # ======== claim params, gradients, optimizer, and model saver ========
-        # params
+        # ================ 4. claim params, gradients, optimizer, and model saver ================
         self.params = tf.get_collection(
             tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.scope
         )
+        self.input_params = []
+        for param in self.params:
+            self.input_params.append(tf.placeholder(tf.float32, shape=param.get_shape()))
+        self.set_params_op = []
+        for idx, param in enumerate(self.input_params):
+            self.set_params_op.append(self.params[idx].assign(param))
 
-        # operations for setting network params
-        self.input_params, self.set_params_op = self.define_params_op()
-
-        # actor gradients
         self.act_gradients = tf.gradients(self.total_loss, self.params)
-        # adaptive learning rate
         self.lr = tf.placeholder(tf.float32, shape=[])
-        # optimizer
         self.act_opt = self.optimizer(self.lr).minimize(self.total_loss)
-        # apply gradients
         self.apply_grads = self.optimizer(self.lr).apply_gradients(zip(self.act_gradients, self.params))
-        # define network param saver and where to restore models
         self.model_saver = tf.train.Saver(max_to_keep=args.num_saved_models)
 
-        # ====== param init (load from saved model in default) ======
+        # ================ 5. param init (load from saved model in default) ================
         self.sess.run(tf.global_variables_initializer())
         if args.saved_model is not None:
             self.model_saver.restore(self.sess, args.saved_model)
 
-    # used for synchronize master params to worker params
-    def get_params(self):
-        return self.sess.run(self.params)
-
-    # the following 2 funcs are called in init
-    def actor_network(self, stage_inputs, gcn_outputs, job_inputs, gsn_job_summary, gsn_global_summary,
-                      stage_valid_mask, job_valid_mask, gsn_summ_backward_map, activate_fn):
+    def policy_network(self, stage_inputs, gcn_outputs, job_inputs, gsn_job_summary, gsn_global_summary,
+                       stage_valid_mask, job_valid_mask, gsn_summ_backward_map, activate_fn):
         """
-        The forwarding computation of the policy network:
-            - Firstly, get the DAG and global summary according to the raw inputs and the outputs of gcn;
-            - Secondly, get the action (next_stage, exec_limit) distribution (softmax as the output layer).
-        This is an implementation of figure. 6.
+        This method implements the right side of the reinforce agent:
+        With (1) the raw (stage and job) inputs, (2) DAG level summary, and (3) global level summary,
+        use neural networks q and w to get the actions:
+            (1) stage selection prob. distribution, and
+            (2) parallelism limit on each job.
+
+        Thus, the main part of this method is the two NNs, q and w.
         """
         batch_size = tf.shape(stage_valid_mask)[0]
 
-        # reshape node inputs to batch format
+        # reshape to batch format
         stage_inputs_reshape = tf.reshape(stage_inputs, [batch_size, -1, self.stage_input_dim])
-
-        # reshape job inputs to batch format
         job_inputs_reshape = tf.reshape(job_inputs, [batch_size, -1, self.job_input_dim])
-
-        # reshape gcn_outputs to batch format
         gcn_outputs_reshape = tf.reshape(gcn_outputs, [batch_size, -1, self.output_dim])
 
-        # reshape gsn_job_summary to batch format
+        # reshape job_summary and global_summary to batch format
         gsn_job_summ_reshape = tf.reshape(gsn_job_summary, [batch_size, -1, self.output_dim])
         gsn_summ_backward_map_extend = tf.tile(tf.expand_dims(gsn_summ_backward_map, axis=0), [batch_size, 1, 1])
         gsn_job_summ_extend = tf.matmul(gsn_summ_backward_map_extend, gsn_job_summ_reshape)
 
-        # reshape gsn_global_summary to batch format
         gsn_global_summ_reshape = tf.reshape(gsn_global_summary, [batch_size, -1, self.output_dim])
         gsn_global_summ_extend_job = tf.tile(gsn_global_summ_reshape, [1, tf.shape(gsn_job_summ_reshape)[1], 1])
         gsn_global_summ_extend_stage = tf.tile(gsn_global_summ_reshape, [1, tf.shape(gsn_job_summ_extend)[1], 1])
@@ -241,18 +216,6 @@ class ReinforceAgent(Agent):
             job_outputs = tf.nn.softmax(job_outputs, dim=-1)
 
             return stage_outputs, job_outputs
-
-    def define_params_op(self):
-        """
-        Called when init.
-        """
-        input_params = []
-        for param in self.params:
-            input_params.append(tf.placeholder(tf.float32, shape=param.get_shape()))
-        set_params_op = []
-        for idx, param in enumerate(input_params):
-            set_params_op.append(self.params[idx].assign(param))
-        return input_params, set_params_op
 
     def invoke_model(self, obs):
         stage_inputs, job_inputs, jobs, src_job, num_src_exec, frontier_stages, exec_limits, \
@@ -479,7 +442,9 @@ class ReinforceAgent(Agent):
 
         return stage, use_exec
 
-    # save model to file
+    def get_params(self):
+        return self.sess.run(self.params)
+
     def save_model(self, save_path):
         return self.sess.run(self.sess, save_path)
 

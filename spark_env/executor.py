@@ -37,10 +37,10 @@ class FreeExecutors:
     """
     This class defines a dict, where the key is the job, the value is the set of bound executors.
     What the key-value pairs mean:
-        - These bound executors (value) are 'free' currently (and temporarily) but are decided to be dispatched to
-        the corresponding job (key).
+        - These bound executors [value] are 'free' currently but are temporarily 'bound' to the corresponding job
+        (the job this exec previously served) [key].
         - When the key is None, the value means the free executors that do not bind to any job, which means these jobs
-        are free to be dispatched and scheduled to any stage of jobs exist in system now.
+        are free to be dispatched and scheduled to any stage of jobs not finished in system now.
     """
     def __init__(self, executors):
         self.free_executors = {None: utils.OrderedSet()}

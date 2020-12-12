@@ -1,6 +1,5 @@
 """
 This module defines the component of a job, i.e. stage.
-If we take the job as a DAG, then stage is the node of the DAG.
 """
 import numpy as np
 import utils
@@ -17,7 +16,8 @@ class Stage:
         Initialize a stage.
         :param idx: stage index
         :param tasks: tasks included in this stage
-        :param task_duration: a dict records various execution time of this stage on different executors under different scenarios.
+        :param task_duration: a dict records various task execution time of this stage with different executors allocated to it
+        under different scenarios.
             The dict looks like
                 {
                     'fresh_durations': {
@@ -45,7 +45,7 @@ class Stage:
             Here e_1, ..., e_N are 2, 5, 10, 80, 100, respectively.
 
             The authors only collect the task execution time under the number of e_i executors.
-            In data/tpch-queries/task_durations/*.pdf, the data points records the durations collected.
+            In ./data/tpch-queries/task_durations/*.pdf, the data points records the durations collected.
                 - the green data points mean the 'fresh_durations';
                 - the red data points mean the 'first_wave';
                 - the blue data points mean the 'rest_wave'.
@@ -66,12 +66,12 @@ class Stage:
 
         self.num_tasks = len(tasks)
         self.num_finished_tasks = 0
-        self.next_task_idx = 0         # the next wait-for-scheduling task' index
+        self.next_task_idx = 0
         self.no_more_task = False
         self.all_tasks_done = False
         self.finish_time = np.inf
 
-        self.executors = utils.OrderedSet()      # executors which marked as running in this stage
+        self.executors = utils.OrderedSet()
 
         # these vars are initialized when the corresponding job is initialized
         # self.parent_stages, self.child_stages, self.descendant_stages = [], [], []
@@ -130,17 +130,18 @@ class Stage:
         if executor_key not in self.task_duration['first_wave']:        # omit .keys()
             # the num of executors is more than the num of tasks in this tage, thus we do not have the record
             # in this case, we choose the maximum executor key collected as a substitute
-            largest_key = 0
-            for e in self.task_duration['first_wave']:
-                if e > largest_key:
-                    largest_key = e
-            executor_key = largest_key
+            # largest_key = 0
+            # for e in self.task_duration['first_wave']:
+            #     if e > largest_key:
+            #         largest_key = e
+            # executor_key = largest_key
+            executor_key = max(self.task_duration['first_wave'])
 
         return executor_key
 
     def schedule(self, executor):
         """
-        Allocate an executor to the exactly wait-for-scheduling task of this stage.
+        Allocate the input executor to the exactly wait-for-scheduling task of this stage.
         Note that the execution time of a same task could be different because the real-world scenarios are complicate.
         To faithfully simulate the actual scenario, we record the execution time under three circumstances (saved in dataset):
             - it is the first time the executor runs on the job (of this stage) ---> 'fresh_duration' (context switch delay counts);
@@ -154,17 +155,17 @@ class Stage:
         assert num_executors > 0
 
         # get the duration of the wait-for-scheduling task when executing on this executor
-        # executor_key represents the number of executors allocated to this stage.
-        # this value impacts the real execution time of each task of this stage
+        # executor_key represents approximation to the number of executors allocated to this stage
+        # we use executor_key to retrieve the execution time from dataset
         executor_key = self.sample_executor_key(num_executors)
         if executor.task is None or executor.task.stage.job != task.stage.job:
             # this executor never execute a task/stage of the job (of this stage) beforehand, use 'fresh_durations'
             if len(self.task_duration['fresh_durations'][executor_key]) > 0:
-                # randomly retrieve a fresh duration from recorded historical data
                 fresh_durations = self.task_duration['fresh_durations'][executor_key]
                 duration = fresh_durations[np.random.randint(len(fresh_durations))]
             else:
-                # dataset does not has this record, manually add the read-from-args warmup delay to a sampled first_wave record from historical data
+                # dataset does not has this record, manually add the read-from-args warmup delay to
+                # a sampled first_wave record from historical data
                 first_wave = self.task_duration['first_wave'][executor_key]
                 duration = first_wave[np.random.randint(len(first_wave))] + args.warmup_delay
 
@@ -188,15 +189,11 @@ class Stage:
                 fresh_durations = self.task_duration['fresh_durations'][executor_key]
                 duration = fresh_durations[np.random.randint(len(fresh_durations))]
 
-        # detach the old stage from this executor (note that this executor is local to the job of this stage)
         executor.detach_stage()
-
-        # schedule this task
         task.schedule(self.wall_time.cur_time, duration, executor)
-        self.executors.add(executor)    # the add() operation is interpreted as: mark this exec as running on this stage
+        self.executors.add(executor)
         executor.stage = self
 
-        # update stage info, if finished, remove itself from the set of frontier stages
         self.next_task_idx += 1
         self.no_more_task = self.next_task_idx >= self.num_tasks
         if self.no_more_task:

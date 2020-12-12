@@ -21,12 +21,12 @@ class Task:
         self.idx = idx
         self.duration = rough_duration
         self.wall_time = wall_time
-        self.stage = None              # assigned when the stage which it belongs to is initialized
+        self.stage = None              # assigned when the stage it belongs to is initialized
 
         # start_time and finish_time are settled only when the task is being scheduled
-        self.start_time = np.nan       # task's execution begin time
-        self.finish_time = np.nan      # task's execution finish time
-        self.executor = None           # the executor which run this task
+        self.start_time = np.nan
+        self.finish_time = np.nan
+        self.executor = None
 
     def schedule(self, start_time, duration, executor):
         """

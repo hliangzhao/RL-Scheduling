@@ -1,9 +1,9 @@
 # prepare environment
-conda create --name rl-scheduling python=3.7
+conda create --name rl-scheduling python=3
 conda activate rl-scheduling
 
-conda install pytorch torchvision torchaudio -c pytorch
-conda install tensorflow=1.14
+conda install pytorch -c pytorch
+conda install tensorflow-gpu==1.15
 conda install networkx
 echo "Environment prepared!"
 

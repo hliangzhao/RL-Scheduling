@@ -21,12 +21,11 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
     task_durations = np.load(query_path + 'task_duration_' + str(query_idx) + '.npy', allow_pickle=True).item()
     # assert adj_mat.shape[0] == adj_mat.shape[1] == len(task_durations)
 
-    # TODO: check the shape of task_durations
     num_stages = adj_mat.shape[0]
     stages = []
-    # new each stage instance
-    for s in range(num_stages):
-        task_duration = task_durations[s]
+
+    for s_idx in range(num_stages):
+        task_duration = task_durations[s_idx]
         e = next(iter(task_duration['first_wave']))        # actually e == 2
         num_tasks = len(task_duration['first_wave'][e]) + len(task_duration['rest_wave'][e])
 
@@ -66,12 +65,11 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
 
         # generate this stage and corresponding tasks
         tasks = []
-        for t in range(num_tasks):
+        for t_idx in range(num_tasks):
             # the tasks in the same stage share the execution duration
-            task = Task(idx=t, rough_duration=rough_duration, wall_time=wall_time)
-            # task = Task(idx=t, rough_duration=0, wall_time=wall_time)
+            task = Task(t_idx, rough_duration, wall_time)
             tasks.append(task)
-        stage = Stage(idx=s, tasks=tasks, task_duration=task_duration, wall_time=wall_time, np_random=np_random)
+        stage = Stage(s_idx, tasks, task_duration, wall_time, np_random)
         stages.append(stage)
 
     # setup parent and child nodes info
@@ -85,7 +83,6 @@ def generate_one_tpch_job(dataset_path, query_size, query_idx, wall_time, np_ran
     #     if len(stage.parent_stages) == 0:
     #         stage.descendant_stages = get_descendants(stage)
 
-    # finally, new the job instance
     return Job(stages=stages, adj_mat=adj_mat, name=args.query_type + '-' + query_size + '-' + str(query_idx))
 
 
@@ -131,7 +128,6 @@ def generate_tpch_jobs(np_random, timeline, wall_time):
         # query size and idx are sampled from uniform distribution
         query_size = args.tpch_size[np_random.randint(len(args.tpch_size))]
         query_idx = np_random.randint(args.tpch_num) + 1
-        # new a job instance
         job = generate_one_tpch_job(args.job_folder, query_size, query_idx, wall_time, np_random)
         job.start_time = tm
         timeline.push(tm, job)
@@ -144,7 +140,7 @@ def generate_alibaba_jobs():
     TODO: Generate jobs from alibaba cluster trace for online training
     """
     assert args.query_type == 'alibaba'
-    assert args.job_folder == './data/alibaba-cluster-trace/'
+    assert args.job_folder == '/data/alibaba-cluster-trace/'
     pass
 
 
